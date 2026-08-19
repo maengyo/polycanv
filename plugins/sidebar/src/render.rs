@@ -4,7 +4,7 @@
 //! "전부 못 그리면 깨진다"가 아니라 "덜 중요한 것부터 접는다"로 설계한다.
 //! 우선순위: 신호등 > 이름 > 도구 > cwd.
 
-use polycanv_protocol::ViewMode;
+use polycanv_protocol::{GroupColor, GroupKey, ViewMode};
 
 use crate::model::Row;
 
@@ -174,10 +174,61 @@ pub fn visible_window(len: usize, selected: usize, height: usize) -> (usize, usi
     (offset.min(len - count), count)
 }
 
+/// 화면 한 줄이 무엇인가.
+///
+/// 그룹 머리글이 줄 사이에 끼어들면서 **"화면 N번째 줄 = 목록 N번째 항목"이 더는 성립하지
+/// 않는다.** 클릭 좌표를 항목으로 되돌리려면 그린 순서를 그대로 재현해야 하므로,
+/// [`screen`] 과 이 함수는 **같은 규칙**을 쓴다 — 한쪽만 고치면 클릭이 어긋난다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Line {
+    /// 맨 위 요약 줄.
+    Header,
+    /// 그룹 머리글. 클릭해도 아무 일도 일어나지 않는다.
+    GroupHeader,
+    /// 목록 항목. 값은 `rows` 의 인덱스.
+    Row(usize),
+}
+
+/// 화면에 그려질 줄들을 순서대로 나열한다. [`screen`] 과 클릭 판정이 공유하는 유일한 진실.
+pub fn line_map(rows: &[Row], offset: usize, height: usize) -> Vec<Line> {
+    let mut lines = vec![Line::Header];
+    if rows.is_empty() {
+        return lines;
+    }
+    let body = height.saturating_sub(HEADER_ROWS);
+    for (i, row) in rows.iter().enumerate().skip(offset).take(body) {
+        if row.starts_group && lines.len() + 1 < height && row.group.is_some() {
+            lines.push(Line::GroupHeader);
+        }
+        if lines.len() >= height {
+            break;
+        }
+        lines.push(Line::Row(i));
+    }
+    lines
+}
+
 /// 클릭한 화면 줄 번호 → 목록 인덱스. 머리글이나 빈 줄을 클릭하면 `None`.
-pub fn row_index_at_line(line: usize, len: usize, offset: usize) -> Option<usize> {
-    let index = offset + line.checked_sub(HEADER_ROWS)?;
-    (index < len).then_some(index)
+pub fn row_index_at_line(line: usize, rows: &[Row], offset: usize, height: usize) -> Option<usize> {
+    match line_map(rows, offset, height).get(line)? {
+        Line::Row(i) => Some(*i),
+        _ => None,
+    }
+}
+
+/// 그룹 머리글. 같은 작업의 세션 묶음 위에 한 줄 얹는다.
+///
+/// **이게 "자리"를 만든다.** 줄 번호는 순서일 뿐이지만, 머리글 아래 묶인 줄들은
+/// 사용자가 "그 프로젝트 쪽"이라고 가리킬 수 있는 덩어리가 된다.
+pub fn group_line(key: &GroupKey, color: GroupColor, cols: usize) -> String {
+    let label = fit(key.label(), cols.saturating_sub(4).max(1));
+    let rule_len = cols.saturating_sub(width(&label) + 3);
+    format!(
+        "\u{1b}[{}m▸ {}{}\u{1b}[0m",
+        color.ansi(),
+        label,
+        " ".repeat(rule_len.min(cols))
+    )
 }
 
 /// 화면 전체. `offset` 은 [`visible_window`] 가 준 값이어야 클릭 좌표와 어긋나지 않는다.
@@ -194,11 +245,50 @@ pub fn screen(
         out.push(fit("터미널이 없다", cols));
         return out;
     }
-    let body = height.saturating_sub(HEADER_ROWS);
-    for (i, row) in rows.iter().enumerate().skip(offset).take(body) {
-        out.push(row_line(row, i, cols, i == selected));
+    // ★ 그리는 순서를 [`line_map`] 에서 받는다. 클릭 판정이 같은 함수를 쓰므로
+    //   여기서만 규칙을 바꾸는 실수가 생기지 않는다.
+    for line in line_map(rows, offset, height).into_iter().skip(1) {
+        match line {
+            Line::Header => {}
+            Line::GroupHeader => {
+                // line_map 이 머리글을 넣었다면 바로 다음 Row 가 그 그룹의 첫 줄이다.
+                if let Some(row) = rows.get(next_row_after(rows, offset, out.len(), height)) {
+                    if let (Some(g), Some(c)) = (row.group.as_ref(), row.color) {
+                        out.push(group_line(g, c, cols));
+                    }
+                }
+            }
+            Line::Row(i) => {
+                if let Some(row) = rows.get(i) {
+                    out.push(colorize(row_line(row, i, cols, i == selected), row.color));
+                }
+            }
+        }
     }
     out
+}
+
+/// 지금 위치 다음에 올 항목의 인덱스. 머리글을 그릴 때 어느 그룹인지 알아내는 데 쓴다.
+fn next_row_after(rows: &[Row], offset: usize, drawn: usize, height: usize) -> usize {
+    line_map(rows, offset, height)
+        .into_iter()
+        .skip(drawn + 1)
+        .find_map(|l| match l {
+            Line::Row(i) => Some(i),
+            _ => None,
+        })
+        .unwrap_or(offset)
+        .min(rows.len().saturating_sub(1))
+}
+
+/// 줄에 그룹 색을 입힌다. 색이 없으면 그대로 둔다 — **색을 지어내지 않는다.**
+///
+/// 선택 하이라이트(반전)는 이미 줄 안에 들어 있으므로 바깥에서 감싸도 덮이지 않는다.
+fn colorize(line: String, color: Option<GroupColor>) -> String {
+    match color {
+        Some(c) => format!("\u{1b}[{}m{}\u{1b}[0m", c.ansi(), line),
+        None => line,
+    }
 }
 
 #[cfg(test)]
@@ -215,6 +305,11 @@ mod tests {
             state: AgentState::Idle,
             is_main: false,
             is_suppressed: false,
+            group: polycanv_protocol::GroupKey::from_cwd(cwd),
+            color: polycanv_protocol::GroupKey::from_cwd(cwd)
+                .as_ref()
+                .map(polycanv_protocol::color_for),
+            starts_group: false,
         }
     }
 
@@ -294,10 +389,11 @@ mod tests {
 
     #[test]
     fn 머리글을_클릭하면_아무것도_고르지_않는다() {
-        assert_eq!(row_index_at_line(0, 5, 0), None);
-        assert_eq!(row_index_at_line(1, 5, 0), Some(0));
-        assert_eq!(row_index_at_line(1, 5, 3), Some(3));
-        assert_eq!(row_index_at_line(9, 5, 0), None);
+        let rows: Vec<Row> = (1..=5).map(|i| row(i, "p", None, None)).collect();
+        assert_eq!(row_index_at_line(0, &rows, 0, 20), None);
+        assert_eq!(row_index_at_line(1, &rows, 0, 20), Some(0));
+        assert_eq!(row_index_at_line(1, &rows, 3, 20), Some(3), "스크롤된 상태");
+        assert_eq!(row_index_at_line(9, &rows, 0, 20), None, "목록 끝 아래");
     }
 
     #[test]
@@ -313,5 +409,68 @@ mod tests {
                 assert!(width(&plain) <= 24, "n={n} {plain:?}");
             }
         }
+    }
+
+    #[test]
+    fn 그룹_머리글이_끼어도_클릭이_밀리지_않는다() {
+        // codex 리뷰가 잡은 버그다. 머리글을 화면에 넣으면서 클릭 좌표 계산을 안 고치면
+        // 머리글 아래부터 한 칸씩 밀려 **엉뚱한 세션이 열린다.**
+        let mut rows = vec![
+            row(1, "a1", None, Some("/w/api")),
+            row(2, "a2", None, Some("/w/api")),
+            row(3, "b1", None, Some("/w/web")),
+        ];
+        rows[0].starts_group = true;
+        rows[2].starts_group = true;
+
+        // 화면: 0=요약, 1=[api], 2=a1, 3=a2, 4=[web], 5=b1
+        assert_eq!(row_index_at_line(0, &rows, 0, 20), None, "요약 줄");
+        assert_eq!(
+            row_index_at_line(1, &rows, 0, 20),
+            None,
+            "그룹 머리글은 항목이 아니다"
+        );
+        assert_eq!(row_index_at_line(2, &rows, 0, 20), Some(0));
+        assert_eq!(row_index_at_line(3, &rows, 0, 20), Some(1));
+        assert_eq!(
+            row_index_at_line(4, &rows, 0, 20),
+            None,
+            "두 번째 그룹 머리글"
+        );
+        assert_eq!(row_index_at_line(5, &rows, 0, 20), Some(2));
+        assert_eq!(row_index_at_line(6, &rows, 0, 20), None, "빈 줄");
+    }
+
+    #[test]
+    fn 그린_줄과_클릭_판정이_같은_수만큼_나온다() {
+        // 둘이 어긋나면 클릭이 조용히 빗나간다. 규칙이 한 곳에 있는지 확인한다.
+        let mut rows = vec![
+            row(1, "a", None, Some("/w/api")),
+            row(2, "b", None, Some("/w/web")),
+            row(3, "c", None, Some("/w/web")),
+        ];
+        rows[0].starts_group = true;
+        rows[1].starts_group = true;
+
+        for height in 3..12 {
+            let drawn = screen(&rows, ViewMode::Canvas, 0, 0, height, 40).len();
+            let mapped = line_map(&rows, 0, height).len();
+            assert_eq!(
+                drawn, mapped,
+                "height={height} 에서 그린 줄과 판정이 다르다"
+            );
+        }
+    }
+
+    #[test]
+    fn 좁은_화면에서는_머리글을_생략한다() {
+        // 세션 줄이 밀려나면서까지 머리글을 넣으면 목록을 못 본다.
+        let mut rows = vec![row(1, "a", None, Some("/w/api"))];
+        rows[0].starts_group = true;
+        let lines = line_map(&rows, 0, 2);
+        assert!(
+            lines.iter().all(|l| !matches!(l, Line::GroupHeader)),
+            "높이 2 에서는 요약 + 항목 하나가 전부여야 한다: {lines:?}"
+        );
     }
 }

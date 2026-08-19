@@ -9,10 +9,12 @@
 use serde::{Deserialize, Serialize};
 
 pub mod event;
+pub mod group;
 pub mod pane;
 pub mod state;
 
 pub use event::{StatusEvent, StatusRecord, StatusSource};
+pub use group::{color_for, GroupColor, GroupKey};
 pub use pane::{PaneKey, PaneMeta, ToolKind};
 pub use state::AgentState;
 

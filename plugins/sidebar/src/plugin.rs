@@ -56,6 +56,9 @@ pub struct Sidebar {
     offset: usize,
     /// 메타데이터 갱신 회전 커서. 틱마다 패인 하나씩 돌아가며 갱신한다.
     refresh_cursor: usize,
+    /// 마지막 렌더의 높이. **클릭 좌표를 항목으로 되돌리려면 그릴 때와 같은 높이가 필요하다** —
+    /// 그룹 머리글이 몇 줄 끼어들었는지가 높이에 따라 달라지기 때문이다.
+    rows_drawn: usize,
     /// 그린 프레임을 stderr 로도 내보낸다 (`debug_render "true"`).
     ///
     /// **zellij 는 플러그인 패인의 내용을 외부에 노출하지 않는다** — `dump-screen` 이
@@ -147,6 +150,7 @@ impl ZellijPlugin for Sidebar {
             rows.saturating_sub(HEADER_ROWS),
         );
         self.offset = offset;
+        self.rows_drawn = rows;
         let frame = screen(&self.view, self.mode, self.selected, offset, rows, cols);
         if self.debug_render {
             // 로그에서 프레임 경계를 찾기 쉽게 표식을 붙인다.
@@ -307,7 +311,7 @@ impl Sidebar {
     fn on_mouse(&mut self, mouse: Mouse) -> bool {
         match mouse {
             Mouse::LeftClick(line, _col) if line >= 0 => {
-                match row_index_at_line(line as usize, self.view.len(), self.offset) {
+                match row_index_at_line(line as usize, &self.view, self.offset, self.rows_drawn) {
                     Some(index) => self.activate(index),
                     None => false,
                 }

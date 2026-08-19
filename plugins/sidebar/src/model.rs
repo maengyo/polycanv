@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use polycanv_protocol::{AgentState, PaneKey, StatusRecord, ToolKind};
+use polycanv_protocol::{
+    color_for, AgentState, GroupColor, GroupKey, PaneKey, StatusRecord, ToolKind,
+};
 
 /// `PaneManifest` 에서 사이드바가 실제로 쓰는 것만 뽑은 것.
 ///
@@ -42,6 +44,12 @@ pub struct Row {
     /// 지금 메인 슬롯을 점유 중인가.
     pub is_main: bool,
     pub is_suppressed: bool,
+    /// 이 세션이 속한 작업 흐름. cwd 를 모르면 `None`.
+    pub group: Option<GroupKey>,
+    /// 그룹의 색. 그룹이 없으면 `None` — 색을 지어내지 않는다.
+    pub color: Option<GroupColor>,
+    /// 이 줄이 그룹의 **첫 줄**인가. 사이드바는 여기에만 그룹 이름을 쓴다.
+    pub starts_group: bool,
 }
 
 /// 인터프리터를 거쳐 실행되는 CLI 가 있다 (`node /usr/local/bin/claude`).
@@ -121,10 +129,38 @@ pub fn build_rows(
                 state: states.get(&p.key).map(|r| r.state).unwrap_or_default(),
                 is_main: Some(p.key) == main,
                 is_suppressed: p.is_suppressed,
+                group: None,
+                color: None,
+                starts_group: false,
             }
         })
         .collect();
-    rows.sort_by_key(|r| r.key);
+    // ★ 그룹으로 먼저 묶고 그 안에서 패인 순서. 그래야 같은 작업의 세션이 **붙어서** 읽힌다.
+    //   흩어져 있으면 색을 칠해도 눈이 따라가지 못한다.
+    //
+    //   그룹이 없는(cwd 를 모르는) 세션은 맨 아래로 보낸다 — 정체가 불분명한 것이
+    //   목록 한가운데서 묶음을 끊으면 안 된다.
+    for row in &mut rows {
+        row.group = GroupKey::from_cwd(row.cwd.as_deref());
+        row.color = row.group.as_ref().map(color_for);
+    }
+    rows.sort_by(|a, b| match (&a.group, &b.group) {
+        (Some(x), Some(y)) => x.cmp(y).then(a.key.cmp(&b.key)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.key.cmp(&b.key),
+    });
+
+    // 그룹의 첫 줄에만 표식을 남긴다. 같은 이름을 매 줄 반복하면 폭만 먹는다.
+    let mut previous: Option<GroupKey> = None;
+    for row in &mut rows {
+        row.starts_group = match (&row.group, &previous) {
+            (Some(g), Some(prev)) => g != prev,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        previous = row.group.clone();
+    }
     rows
 }
 
@@ -197,6 +233,88 @@ pub fn refresh_targets(panes: &[PaneSnapshot], cursor: usize) -> Vec<PaneKey> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 같은_작업_디렉터리의_세션은_붙어서_나온다() {
+        // 흩어져 있으면 색을 칠해도 눈이 따라가지 못한다 — 묶임이 먼저다.
+        let panes = vec![
+            pane(1, false, false),
+            pane(2, false, false),
+            pane(3, false, false),
+        ];
+        let mut facts = BTreeMap::new();
+        facts.insert(PaneKey::Terminal(1), facts_with_cwd("/w/api"));
+        facts.insert(PaneKey::Terminal(2), facts_with_cwd("/w/web"));
+        facts.insert(PaneKey::Terminal(3), facts_with_cwd("/w/api"));
+
+        let rows = build_rows(&panes, &facts, &BTreeMap::new(), None);
+        let groups: Vec<_> = rows
+            .iter()
+            .map(|r| r.group.as_ref().unwrap().0.as_str())
+            .collect();
+        assert_eq!(
+            groups,
+            vec!["/w/api", "/w/api", "/w/web"],
+            "같은 디렉터리가 붙어야 한다"
+        );
+    }
+
+    #[test]
+    fn 그룹의_첫_줄에만_머리글_표식이_붙는다() {
+        let panes = vec![
+            pane(1, false, false),
+            pane(2, false, false),
+            pane(3, false, false),
+        ];
+        let mut facts = BTreeMap::new();
+        facts.insert(PaneKey::Terminal(1), facts_with_cwd("/w/api"));
+        facts.insert(PaneKey::Terminal(2), facts_with_cwd("/w/api"));
+        facts.insert(PaneKey::Terminal(3), facts_with_cwd("/w/web"));
+
+        let rows = build_rows(&panes, &facts, &BTreeMap::new(), None);
+        let starts: Vec<bool> = rows.iter().map(|r| r.starts_group).collect();
+        assert_eq!(
+            starts,
+            vec![true, false, true],
+            "같은 이름을 매 줄 반복하면 폭만 먹는다"
+        );
+    }
+
+    #[test]
+    fn 같은_그룹은_같은_색을_받는다() {
+        let panes = vec![pane(1, false, false), pane(2, false, false)];
+        let mut facts = BTreeMap::new();
+        facts.insert(PaneKey::Terminal(1), facts_with_cwd("/w/api"));
+        facts.insert(PaneKey::Terminal(2), facts_with_cwd("/w/api"));
+
+        let rows = build_rows(&panes, &facts, &BTreeMap::new(), None);
+        assert_eq!(rows[0].color, rows[1].color);
+        assert!(rows[0].color.is_some());
+    }
+
+    #[test]
+    fn cwd_를_모르는_세션은_맨_아래로_간다() {
+        // 정체가 불분명한 것이 목록 한가운데서 묶음을 끊으면 안 된다.
+        let panes = vec![pane(1, false, false), pane(2, false, false)];
+        let mut facts = BTreeMap::new();
+        facts.insert(PaneKey::Terminal(1), PaneFacts::default()); // cwd 없음
+        facts.insert(PaneKey::Terminal(2), facts_with_cwd("/w/api"));
+
+        let rows = build_rows(&panes, &facts, &BTreeMap::new(), None);
+        assert_eq!(rows[0].key, PaneKey::Terminal(2), "그룹 있는 세션이 위로");
+        assert!(rows[1].group.is_none());
+        assert!(
+            rows[1].color.is_none(),
+            "그룹이 없으면 색도 지어내지 않는다"
+        );
+    }
+
+    fn facts_with_cwd(cwd: &str) -> PaneFacts {
+        PaneFacts {
+            cwd: Some(cwd.to_string()),
+            ..PaneFacts::default()
+        }
+    }
+
     #[test]
     fn 갱신_대상은_틱당_최대_두_개다() {
         // 패인이 몇 개든 호스트 왕복은 상수여야 한다 — 이게 타임아웃 붕괴를 막는다.
