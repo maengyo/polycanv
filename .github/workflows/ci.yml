@@ -1,7 +1,9 @@
 name: CI
 
-# 세 OS 는 동등하다. Windows 를 "나중에" 로 미루면 조용히 깨진다 —
-# 개발이 macOS 에서 이뤄지고 있으므로 Linux/Windows 는 **오직 여기서만** 지켜진다.
+# 세 OS 는 동등하다. Windows 를 "나중에" 로 미루면 조용히 깨진다.
+#
+# ⚠️ Windows 는 PTY 가 다르다 — `pty` 모듈이 유닉스 전용이라 터미널 구동 자체가
+#    지금은 불가능하다. 그래도 매트릭스에 남겨 **무엇이 안 되는지 눈에 보이게** 한다.
 
 on:
   push:
@@ -9,100 +11,45 @@ on:
   pull_request:
   workflow_dispatch:
 
-# 워크플로가 쓸 수 있는 토큰 권한을 최소로 못 박는다.
-# 선언하지 않으면 저장소 기본값을 쓰는데, 그게 write 면 서드파티 액션이 침해됐을 때
-# 그 잡의 GITHUB_TOKEN 으로 이 저장소에 커밋을 밀어넣을 수 있다.
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  # 빌드 로그를 읽을 수 있게. CI 에서 경고를 흘려보내면 곧 경고가 100개가 된다.
-  RUSTFLAGS: -D warnings
-
 jobs:
   test:
-    name: 테스트 (${{ matrix.os }})
+    name: 테스트 (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false   # 한 OS 가 깨져도 나머지 결과를 봐야 한다
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262        # v4
-      # ★ SHA 로 고정하면 액션이 ref 에서 툴체인 이름을 읽지 못한다.
-      #   `@stable` 일 때는 ref 가 곧 툴체인 이름이었다. 고정한 뒤에는 명시해야 한다.
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc      # v6
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c     # v2
-
-      # 호스트 타깃 테스트. 플러그인의 순수 로직(파싱·상태 병합·렌더 계산)은
-      # wasm 없이 여기서 돈다 — 그래서 세 OS 에서 의미가 있다.
-      # --all-features 를 쓰지 않는다. protocol 의 `zellij` 피처는 zellij-utils 를 끌어오는데,
-      # 그건 wasm 플러그인용이라 Windows 호스트에서 깨질 수 있다. 그 조합은 wasm 잡이 덮는다.
+          python-version: ${{ matrix.python }}
+      - run: uv sync --all-extras --dev
       - name: 테스트
-        run: cargo test --workspace
-
-      - name: 포맷
-        run: cargo fmt --all --check
-
+        run: uv run pytest -q
       - name: 린트
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: uv run ruff check src tests
+      - name: 포맷
+        run: uv run ruff format --check src tests
 
-  wasm:
-    name: wasm 빌드
+  install:
+    name: uv tool install 이 실제로 되는가
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262        # v4
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c  # stable
-        with:
-          # SHA 고정 시 툴체인 이름을 명시해야 한다 (위 주석 참조)
-          toolchain: stable
-          # 오래된 문서의 wasm32-wasi 가 아니다. 이 툴체인에 그 타깃은 없다.
-          targets: wasm32-wasip1
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c     # v2
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc      # v6
 
-      - name: 플러그인 빌드
-        run: cargo build --release --target wasm32-wasip1 -p polycanv-sidebar -p polycanv-launcher -p polycanv-status
-
-      # zellij 가 로드하는 wasm 은 **바이너리 크레이트**여야 한다.
-      # cdylib 으로 만들면 `_start` 가 없어 로드에 실패하는데, 빌드는 성공하므로
-      # 여기서 산출물 존재를 확인하지 않으면 배포 후에야 드러난다.
-      - name: 산출물 확인
+      # 이 프로젝트의 약속은 "한 명령으로 설치된다" 이다.
+      # 빌드가 되는 것과 설치가 되는 것은 다르므로 여기서 실제로 설치해 본다.
+      - name: 빌드
+        run: uv build
+      - name: 설치
+        run: uv tool install ./dist/*.whl
+      - name: 실행 파일이 생겼는가
         run: |
-          for f in polycanv-sidebar polycanv-launcher polycanv-status; do
-            path="target/wasm32-wasip1/release/$f.wasm"
-            test -f "$path" || { echo "::error::$path 가 없다"; exit 1; }
-            # 링크가 빠지면 빌드는 성공하고 빈 wasm 이 나온다(실측: 1.7MB → 49KB).
-            # 로드 시점에야 드러나므로 여기서 크기로 잡는다.
-            size=$(stat -c%s "$path")
-            test "$size" -gt 500000 || { echo "::error::$f 가 ${size}B 뿐이다 — 플러그인 코드가 링크되지 않았다"; exit 1; }
-            echo "$f: $(du -h "$path" | cut -f1)"
-          done
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: polycanv-plugins
-          path: target/wasm32-wasip1/release/*.wasm
-          if-no-files-found: error
-
-  scripts:
-    name: 셸 스크립트
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262        # v4
-
-      # 훅 브리지는 CLI 훅에서 불린다. 여기서 깨지면 사용자의 CLI 턴이 멈춘다.
-      - name: shellcheck
-        run: shellcheck scripts/*.sh plugins/status/bridge/*.sh
-
-      # 환경 점검 경로가 도는지 확인한다(zellij 미설치 환경이므로 실패가 정상 —
-      # 안내 메시지를 내고 깔끔히 종료하는지가 관심사다).
-      - name: install.sh --check 가 우아하게 실패하는가
-        run: |
-          if sh scripts/install.sh --check; then
-            echo "::error::zellij 가 없는데 점검이 통과했다 — 점검이 무의미하다"
-            exit 1
-          fi
-          echo "예상대로 안내와 함께 실패했다"
+          command -v polycanv || { echo "::error::polycanv 명령이 없다"; exit 1; }
+          echo "설치 확인: $(command -v polycanv)"

@@ -46,19 +46,17 @@ not a privileged set.
 
 ## Install
 
-**Requirements**: [zellij](https://github.com/zellij-org/zellij) **0.43.0+**
-(0.44.3 recommended), Rust stable with the `wasm32-wasip1` target.
+One command. No terminal multiplexer to install first, no toolchain.
 
 ```sh
-git clone https://github.com/maengyo/polycanv && cd polycanv
-sh scripts/install.sh
-zellij --config config/keybinds.kdl -s polycanv -n layouts/polycanv.kdl
+uv tool install polycanv
+polycanv
 ```
 
-> **On first run the sidebar asks for permissions. Approve with `y`.**
-> Until you do, it loads but does not respond to keys — that is not a bug.
+Requires Python 3.10+, which `uv` will fetch for you if you do not have it.
 
-To light up the traffic lights you need to wire CLI hooks. See **[docs/setup.md](docs/setup.md)**.
+> **Unix only for now.** Terminals are driven through `pty`, which does not exist on
+> Windows. WSL works.
 
 ### From a browser
 

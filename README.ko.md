@@ -41,19 +41,16 @@ claude code · codex cli · opencode · qwen code · PowerShell · bash/zsh —
 
 ## 설치
 
-**요구사항**: [zellij](https://github.com/zellij-org/zellij) **0.43.0+** (0.44.3 권장),
-Rust stable + `wasm32-wasip1` 타깃
+명령 하나면 됩니다. 터미널 멀티플렉서를 먼저 깔 필요도, 툴체인도 없습니다.
 
 ```sh
-git clone https://github.com/maengyo/polycanv && cd polycanv
-sh scripts/install.sh
-zellij --config config/keybinds.kdl -s polycanv -n layouts/polycanv.kdl
+uv tool install polycanv
+polycanv
 ```
 
-> **최초 실행 시 사이드바가 권한을 요청합니다. `y` 로 승인하세요.**
-> 승인 전에는 로드만 되고 키에 반응하지 않습니다 — 고장이 아닙니다.
+Python 3.10+ 가 필요하고, 없으면 `uv` 가 알아서 받아옵니다.
 
-신호등을 켜려면 CLI 훅을 배선해야 합니다. **[docs/setup.md](docs/setup.md)** 를 보세요.
+> **아직 유닉스 전용입니다.** 터미널을 `pty` 로 돌리는데 Windows 에는 그게 없습니다. WSL 은 됩니다.
 
 ### 브라우저로 열기
 
