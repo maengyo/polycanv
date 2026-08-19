@@ -83,6 +83,18 @@ plugins/status/     state detection → traffic lights
 scripts/            install, CLI hook → state bridge
 ```
 
+## Prior art
+
+The concept comes from **[cate](https://github.com/0-AI-UG/cate)** — *an infinite canvas
+IDE for parallel coding agents*. cate makes the canvas a mission control: every terminal
+shows whether its agent is working, finished, or waiting on you, and each git worktree gets
+its own coloured territory, so five agents on five branches read as five separate
+workstreams rather than a pile of tabs.
+
+polycanv takes that idea to the terminal. Same premise — **sessions need a place, not a
+tab index** — with a deliberately narrower scope: no editor, no browser, no desktop app.
+If you want the full spatial IDE, use cate; it is the richer tool.
+
 ## Backlog
 
 Open work is tracked in [issues](https://github.com/maengyo/polycanv/issues) and on the
