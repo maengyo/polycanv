@@ -1,0 +1,26 @@
+[package]
+name = "polycanv-sidebar"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "리스트 사이드바 — 목록 렌더링, 선택 → 메인 교체, 캔버스↔리스트 뷰 전환"
+
+[lib]
+name = "polycanv_sidebar"
+
+# zellij 가 로드하는 wasm 은 **바이너리 크레이트**여야 한다. `[lib] crate-type=["cdylib"]` 로 만들면
+# `_start` 가 없어 로드에 실패한다 (docs/research/zellij-pane-control-api.md 「재현 절차 1)」).
+[[bin]]
+name = "polycanv-sidebar"
+path = "src/main.rs"
+
+[dependencies]
+polycanv-protocol = { path = "../../crates/protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# zellij-tile 은 wasm 타깃에서만 링크된다. 호스트에는 host_run_plugin_command 심볼이 없어
+# 링크가 깨지므로, 순수 로직(lib)만 호스트에서 `cargo test` 로 돌린다.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+zellij-tile = "0.44.3"
+polycanv-protocol = { path = "../../crates/protocol", features = ["zellij"] }

@@ -1,0 +1,143 @@
+// polycanv — 캔버스 / 리스트 뷰 전환 레이아웃
+//
+//   실행: zellij --config config/keybinds.kdl -s <name> -n layouts/polycanv.kdl
+//   토글: Ctrl+y  (config/keybinds.kdl)
+//
+// ════════════════════════════════════════════════════════════════════════════════
+//  ★ 왜 swap_tiled_layout 이 1개인가 (실측으로 뒤집힌 설계 전제)
+// ════════════════════════════════════════════════════════════════════════════════
+//  조사 문서 「영향 4-(3)」은 "캔버스·리스트 swap layout 을 정확히 2개 두면
+//  next_swap_layout() 이 토글로 동작한다" 고 했다. **실측 결과 이건 틀렸다.**
+//
+//  next_swap_layout() 의 순환에는 **기저 레이아웃(BASE)이 항상 한 자리를 차지한다.**
+//  swap_tiled_layout 을 2개 두면 순환은 주기 2가 아니라 주기 3이 된다:
+//
+//      $ zellij -s S action list-tabs --all   # 마지막에서 두 번째 칼럼 = SWAP_LAYOUT
+//      시작:      SWAP_LAYOUT=BASE    sidebar="22%"
+//      next 1회:  SWAP_LAYOUT=canvas  sidebar="22%"
+//      next 2회:  SWAP_LAYOUT=list    sidebar="30%"
+//      next 3회:  SWAP_LAYOUT=BASE    sidebar="22%"   ← 여기서 "먹통 한 번"이 생긴다
+//
+//  → 그래서 **기저 레이아웃 자체를 캔버스 뷰로 삼고, swap_tiled_layout 은 리스트 1개만 둔다.**
+//    그러면 순환이 BASE(캔버스) ↔ list 주기 2가 되어 키 한 번 = 뷰 한 번 전환이 보장된다.
+//
+// ════════════════════════════════════════════════════════════════════════════════
+//  ★ 지켜야 하는 제약 (docs/research/zellij-pane-control-api.md 「영향 4」)
+// ════════════════════════════════════════════════════════════════════════════════
+//  1. 터미널 슬롯 노드에 **command 를 쓰지 마라.** 슬롯 배정 1단계(exact match)에 걸리면
+//     사이드바 플러그인이 replace_pane_with_existing_pane 으로 만들어 둔
+//     "지금 메인에 뭐가 있는지" 상태를 뷰 전환이 덮어쓴다.
+//     기저 레이아웃도 순환의 일부이므로 **기저 레이아웃에도 command 를 쓰면 안 된다.**
+//     터미널은 launcher 플러그인이 채운다.
+//  2. 사이드바 슬롯에는 **plugin location= 을 명시**한다. exact match 1단계가 사이드바 패인을
+//     항상 사이드바 자리로 되돌린다. (실측: 두 뷰 왕복 10회에서 사이드바 위치 100% 유지)
+//  3. **max_panes / min_panes / exact_panes 를 쓰지 마라.** 제약이 붙으면 패인 수에 따라
+//     리스트 레이아웃이 후보에서 탈락해 토글이 캔버스에 고착된다.
+//
+// 사이드바는 polycanv 플러그인이다. 설치 위치는 `~/.config/zellij/plugins/polycanv-sidebar.wasm`
+// (실측: 이 경로에서 로드된다). 설치 스크립트가 여기에 wasm 을 놓아야 한다 — release-eng 몫.
+// 개발 중 재빌드 후에는 이 경로로 다시 복사해야 반영된다.
+
+layout {
+    // ⚠️ `hide_floating_panes` 를 여기 쓰지 마라. **레이아웃 옵션이 아니다.**
+    //    zellij 소스에서 그 키는 session_serialization.rs(세션 저장/복원)에만 있고
+    //    레이아웃 파서는 모른다. 그리고 zellij 는 **모르는 옵션을 조용히 무시**하므로
+    //    `setup --check` 도 통과한다 — 실제로 이 함정에 걸렸다.
+    tab_template name="ui" {
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+        // 상태 감지 플러그인. 한 줄만 차지한다.
+        //
+        // 플로팅으로 숨기려 했으나 zellij 레이아웃에는 그런 수단이 없다(위 주석 참조).
+        // 그래서 **한 줄 타일**로 둔다 — 어차피 "몇 개가 도는 중인지" 한 줄 요약은 쓸모가 있고,
+        // 숨은 패인보다 눈에 보이는 편이 디버깅에도 낫다.
+        //
+        // opencode 처럼 훅이 아니라 SSE 로 상태를 내는 CLI 는 원문 해석에 Rust 어댑터가 필요하고
+        // 그게 이 플러그인 안에 있다. 훅 기반 CLI(claude/codex/qwen)는 이걸 거치지 않는다 —
+        // `scripts/polycanv-hook.sh` 가 사이드바로 직접 보낸다.
+        pane size=1 borderless=true {
+            plugin location="file:~/.config/zellij/plugins/polycanv-status.wasm"
+        }
+    }
+
+    // ── 기저 레이아웃 = 캔버스 뷰 ────────────────────────────────────────────────
+    // 슬롯은 4개지만 패인이 더 적으면 zellij 가 빈 슬롯을 접고, 더 많으면 알아서 끼워 넣는다.
+    // (실측: 터미널 1개 → 사이드바 22% + 메인 78% 단일 패인. 깨지지 않음)
+    ui name="polycanv" {
+        pane split_direction="vertical" {
+            pane size="22%" name="sidebar" {
+                plugin location="file:~/.config/zellij/plugins/polycanv-sidebar.wasm"
+            }
+            pane split_direction="horizontal" {
+                pane split_direction="vertical" {
+                    pane
+                    pane
+                }
+                pane split_direction="vertical" {
+                    pane
+                    pane
+                }
+            }
+        }
+    }
+
+    // ── 캔버스 뷰 = swap layout (기저에만 의존하면 안 된다) ──────────────────────
+    // ★ 런타임에서 드러난 것: 기저 레이아웃만으로는 "리스트 → 캔버스"가 실패한다.
+    //   zellij 는 기저를 ExactPanes(선언 패인 수) 제약으로 등록하므로
+    //   (zellij-server/src/tab/swap_layouts.rs:47) 패인 수가 다르면 기저가 순환에서 빠지고,
+    //   순환에 리스트 하나만 남아 next_swap_layout() 을 몇 번 불러도 리스트에 고착된다.
+    //   실측 로그: `swap layout 을 Canvas 로 몰지 못했다 (active=Some("list"), 시도 4회)`
+    //   → 캔버스를 **제약 없는 swap_tiled_layout 으로 따로 선언**해야 패인 수와 무관하게 도달한다.
+    swap_tiled_layout name="canvas" {
+        ui {
+            pane split_direction="vertical" {
+                pane size="22%" {
+                    plugin location="file:~/.config/zellij/plugins/polycanv-sidebar.wasm"
+                }
+                pane { children; }
+            }
+        }
+    }
+
+    // ── 리스트 뷰 ───────────────────────────────────────────────────────────────
+    // 사이드바를 넓히고 메인 슬롯 1개만 둔다.
+    //
+    // ⚠️ 메인에 없는 나머지 패인을 **이 레이아웃이 숨기지는 못한다.** swap layout 은
+    //    tiled_panes 만 재배치하고 suppressed 는 건드리지 않는다. 타일에 N개가 남아 있으면
+    //    메인 영역이 N등분될 뿐이다 (실측: 터미널 6개 → 70% 영역이 16%씩 6등분).
+    //    "메인 1개 + 나머지 접힘"은 사이드바 플러그인이 먼저 접은 뒤 전환하는 2단계다.
+    //    상세는 이 파일 맨 아래 주석 참조.
+    swap_tiled_layout name="list" {
+        ui {
+            pane split_direction="vertical" {
+                pane size="30%" {
+                    plugin location="file:~/.config/zellij/plugins/polycanv-sidebar.wasm"
+                }
+                pane { children; }
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  ★ 레이아웃으로 되는 것 / 플러그인 호출이 필요한 것 (경계)
+// ════════════════════════════════════════════════════════════════════════════════
+//  레이아웃만으로 된다:
+//    - 캔버스 ↔ 리스트 **배치** 전환 (사이드바 폭, 메인 영역 분할)
+//    - 사이드바 패인을 항상 사이드바 자리로 되돌리기
+//    - 전환 중 프로세스 보존 (실측: 왕복 10회, 패인 PID 전부 동일)
+//
+//  플러그인 호출이 필요하다:
+//    - 리스트 뷰에서 "메인 1개만 남기고 나머지 접기"
+//      → 접을 패인마다 replace_pane_with_existing_pane(접을것, 메인, true) 로 suppressed 로 보낸다
+//    - 캔버스 뷰로 돌아갈 때 suppressed 패인을 타일로 되돌리기
+//      → swap layout 은 suppressed 를 끌어올리지 못한다. show_pane_with_id 등이 필요하다
+//    - "리스트로 가라" 를 결정론적으로 지정하기
+//      → next_swap_layout() 은 인덱스 지정이 없다. 다만 TabInfo 의 active_swap_layout_name
+//        (CLI 로는 `list-tabs --all` 의 SWAP_LAYOUT 칼럼)을 읽어 목표에 닿을 때까지
+//        반복 호출하면 결정론적으로 만들 수 있다.

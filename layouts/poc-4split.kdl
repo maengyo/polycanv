@@ -1,0 +1,26 @@
+// polycanv PoC — 로드맵 ② 4분할 캔버스
+//
+// 목적: "여러 AI CLI를 한 화면에 동시에 띄우고 클릭으로 전환" 이 zellij 만으로
+// 성립하는지 확인하는 최소 레이아웃. swap layout·플러그인은 여기 없다 (polycanv.kdl 참조).
+//
+//   실행: zellij --session <name> --layout layouts/poc-4split.kdl
+//
+// qwen code 는 로컬 미설치라 셸로 대체했다. 설치되면 pane name="qwen" command="qwen" 으로 바꾼다.
+layout {
+    pane size=1 borderless=true {
+        plugin location="tab-bar"
+    }
+    pane split_direction="vertical" {
+        pane split_direction="horizontal" {
+            pane name="claude"   command="claude"
+            pane name="opencode" command="opencode"
+        }
+        pane split_direction="horizontal" {
+            pane name="codex" command="codex"
+            pane name="shell"
+        }
+    }
+    pane size=2 borderless=true {
+        plugin location="status-bar"
+    }
+}

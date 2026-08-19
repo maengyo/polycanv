@@ -1,0 +1,19 @@
+[package]
+name = "polycanv-protocol"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "polycanv 플러그인 3종이 공유하는 상태·메타데이터 계약"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = []
+# zellij-tile 의 PaneId 와 상호 변환한다. wasm 플러그인 쪽에서만 켠다.
+zellij = ["dep:zellij-tile"]
+
+[dependencies.zellij-tile]
+version = "0.44.3"
+optional = true

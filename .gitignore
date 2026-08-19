@@ -1,0 +1,9 @@
+target/
+**/*.rs.bk
+*.wasm
+.DS_Store
+.remember/
+dist/
+
+# 권한 허용목록 등 로컬 전용 설정 — 커밋하지 않는다
+.claude/settings.local.json

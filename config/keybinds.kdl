@@ -1,0 +1,66 @@
+// polycanv 키바인딩 / 옵션
+//
+//   zellij --config config/keybinds.kdl -s <name> -n layouts/polycanv.kdl
+//
+// 뷰 토글은 NextSwapLayout 하나에 건다. layouts/polycanv.kdl 의 swap_tiled_layout 이
+// **정확히 2개**이므로 이 액션 하나가 캔버스↔리스트 토글로 동작한다.
+//
+// ⚠️ zellij 0.44.3 은 **모르는 최상위 옵션을 조용히 무시한다.**
+//    `zellij setup --check` 의 "Well defined" 는 옵션 이름이 맞다는 뜻이 아니다.
+//    (실측: `this_option_does_not_exist true` 도 "Well defined" 로 통과한다)
+//    아래 옵션은 전부 `zellij setup --dump-config` 에 실제로 존재하는 것만 남겼다.
+
+keybinds {
+    // clear-defaults 는 쓰지 않는다 — zellij 기본 키맵 위에 얹는다.
+    shared_except "locked" {
+        // 캔버스 ↔ 리스트 토글. 모드 진입 없이 한 번에.
+        //
+        // ★ NextSwapLayout 을 직접 부르면 안 된다. 그건 2단계 전환의 **2단계만** 수행한다.
+        //   패인을 접거나 펼치는 1단계가 빠져서, 리스트로 가도 메인 영역이 N등분될 뿐이고
+        //   캔버스로 돌아와도 접힌 패인이 되살아나지 않는다.
+        //   대신 사이드바 플러그인에 파이프 메시지를 보내 **플러그인이 2단계를 다 하게** 한다.
+        //
+        // ★ 플러그인 로컬 키('v'/Tab)로만 두면 안 되는 이유:
+        //   접기·선택 직후 포커스는 메인 터미널로 옮겨간다. 그 상태에서 플러그인 키를 누르면
+        //   그냥 터미널에 글자가 타이핑된다. 사용자는 캔버스로 돌아올 방법이 없어진다.
+        //   (실측으로 확인한 함정이다)
+        bind "Ctrl y" {
+            MessagePlugin "file:~/.config/zellij/plugins/polycanv-sidebar.wasm" {
+                name "toggle_view"
+            }
+        }
+
+        // 런처 열기 — 도구를 골라 새 패인에서 실행한다.
+        //
+        // ★ LaunchOrFocusPlugin 을 쓴다. `zellij pipe` 로 런처를 띄우지 마라:
+        //   파이프는 일치하는 인스턴스가 없으면 **새로 띄우는데, 새 인스턴스는 권한 미승인이라
+        //   호출자가 영구히 매달린다.** (실측) LaunchOrFocusPlugin 은 이미 떠 있으면 포커스만
+        //   옮기므로 승인된 인스턴스 하나를 계속 재사용한다.
+        //
+        // ★ 도구 목록이 여기 있다. **항목을 추가·수정하려면 이 블록만 고치면 된다.**
+        //   아래 6개는 기본값일 뿐 특별 대우 대상이 아니다 — tool_<이름> "<실행파일 인자...>".
+        bind "Ctrl o" {
+            LaunchOrFocusPlugin "file:~/.config/zellij/plugins/polycanv-launcher.wasm" {
+                floating true
+                tool_claude "claude"
+                tool_codex "codex"
+                tool_opencode "opencode"
+                tool_qwen "qwen"
+                tool_shell "zsh"
+                tool_pwsh "pwsh -NoLogo"          // Windows·macOS·Linux 공통
+                tool_wsl "wsl.exe"                // Windows 전용. 없는 도구는 실행 시 알려준다
+            }
+        }
+    }
+}
+
+// 마우스 클릭 포커스는 요구사항 1이다. 절대 끄지 마라. (기본값 true, 명시적으로 못박는다)
+mouse_mode true
+
+// 새 패인이 열리거나 닫힐 때마다 zellij 가 swap layout 을 자동 재적용하는 기능.
+// polycanv 는 "지금 캔버스인지 리스트인지"를 사용자 의도로 유지해야 하므로 끈다.
+// (근거: docs/research/zellij-pane-control-api.md 「미해결 4」 + 아래 실측)
+auto_layout false
+
+// 버전 갱신 직후 릴리스 노트 패인이 떠서 레이아웃을 흔드는 것을 막는다.
+show_release_notes false
