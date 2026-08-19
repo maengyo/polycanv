@@ -32,9 +32,9 @@ jobs:
       - name: 테스트
         run: uv run pytest -q
       - name: 린트
-        run: uv run ruff check src tests
+        run: uv run ruff check .
       - name: 포맷
-        run: uv run ruff format --check src tests
+        run: uv run ruff format --check .
 
   install:
     name: uv tool install 이 실제로 되는가

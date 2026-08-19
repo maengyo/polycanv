@@ -1,9 +1,23 @@
-target/
-**/*.rs.bk
-*.wasm
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# 데모를 찍을 때 만드는 임시 환경
+.demo/
+
 .DS_Store
 .remember/
-dist/
 
 # 권한 허용목록 등 로컬 전용 설정 — 커밋하지 않는다
 .claude/settings.local.json
+
+# legacy-zellij 브랜치가 쓰는 것들
+target/
+**/*.rs.bk
+*.wasm

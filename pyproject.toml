@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
     "textual>=8.0",   # TUI. 절대 좌표 배치와 마우스를 둘 다 준다 — 자유 캔버스의 전제
     "pyte>=0.8",      # 터미널 에뮬레이션. PTY 가 뱉는 ANSI 를 화면 상태로 바꾼다
+    'tomli>=2.0; python_version < "3.11"',  # 3.11 부터는 표준 tomllib 을 쓴다
 ]
 
 [project.optional-dependencies]

@@ -109,3 +109,29 @@ async def test_재생_버퍼가_무한정_자라지_않는다():
         panel._remember(b"x" * (REPLAY_LIMIT * 2))
         assert len(panel._replay) == REPLAY_LIMIT
         panel.close()
+
+
+async def test_캔버스_밖으로는_못_나간다() -> None:
+    """끌다가 놓친 터미널을 되찾을 방법이 없으면 안 된다."""
+    app = PolycanvApp()
+    async with app.run_test(size=(80, 24)):
+        panel = app.canvas.panels[0]
+
+        panel.move_to(500, 500)
+
+        assert panel.geometry_.x + panel.geometry_.width <= 80
+        assert panel.geometry_.y + panel.geometry_.height <= 24
+        panel.move_to(-40, -40)
+        assert (panel.geometry_.x, panel.geometry_.y) == (0, 0)
+
+
+async def test_크기도_캔버스를_넘지_않는다() -> None:
+    app = PolycanvApp()
+    async with app.run_test(size=(80, 24)):
+        panel = app.canvas.panels[0]
+        panel.move_to(10, 4)
+
+        panel.resize_to(500, 500)
+
+        assert panel.geometry_.x + panel.geometry_.width <= 80
+        assert panel.geometry_.y + panel.geometry_.height <= 24

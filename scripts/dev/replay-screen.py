@@ -5,7 +5,11 @@ ANSI 시퀀스를 해석하지 않으면 커서 이동·지우기가 무시돼 �
 
 pyte 는 일부 질의 시퀀스(DSR 등)에서 예외를 던진다 — 우리는 화면만 필요하므로 삼킨다.
 """
-import sys, pyte
+
+import contextlib
+import sys
+
+import pyte
 
 
 class Tolerant(pyte.HistoryScreen):
@@ -20,15 +24,14 @@ class Tolerant(pyte.HistoryScreen):
 rows, cols = int(sys.argv[2]), int(sys.argv[3])
 screen = Tolerant(cols, rows)
 stream = pyte.ByteStream(screen)
-data = open(sys.argv[1], "rb").read()
+with open(sys.argv[1], "rb") as src:
+    data = src.read()
 
 # 한 바이트씩 먹여 예외가 나도 그 지점만 건너뛴다
 chunk = 4096
 for i in range(0, len(data), chunk):
-    try:
-        stream.feed(data[i:i + chunk])
-    except Exception:
-        pass
+    with contextlib.suppress(Exception):
+        stream.feed(data[i : i + chunk])
 
 for line in screen.display:
     print(line.rstrip())

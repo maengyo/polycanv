@@ -680,6 +680,7 @@ source = { editable = "." }
 dependencies = [
     { name = "pyte" },
     { name = "textual" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -699,6 +700,7 @@ requires-dist = [
     { name = "pyte", specifier = ">=0.8" },
     { name = "textual", specifier = ">=8.0" },
     { name = "textual-serve", marker = "extra == 'web'", specifier = ">=1.1" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]
 provides-extras = ["web"]
 

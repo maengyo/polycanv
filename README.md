@@ -1,48 +1,31 @@
 # polycanv
 
-> ⚠️ Under development. Windows and Linux are not yet verified in practice.
+> ⚠️ Early development. macOS is where it is developed and tested; Linux should work but is
+> unverified; Windows does not work yet (see below).
 
 **한국어 문서: [README.ko.md](README.ko.md)**
 
 Your coding sessions end up scattered. One window here, a tab there, another buried
 behind three others. When you want a specific session, you go hunting for it.
 
-polycanv puts them all on **one screen**. Spread them out to see everything at once,
-or fold them into a list and work on one — either way you always know where each
-session is.
+polycanv puts them on **one canvas** — each terminal in a place you chose, at a size you
+chose, staying where you put it.
 
-```
-[canvas view]                      [list view]
-┌────────┬────────┐              ┌───────┬─────────────┐
-│ claude │ codex  │   Ctrl+y    │ claude│             │
-├────────┼────────┤ ───────────▶ │ codex │ claude code │
-│ qwen   │ pwsh   │              │ qwen  │  (expanded) │
-└────────┴────────┘              │ pwsh  │             │
-                                 └───────┴─────────────┘
-   see everything                  focus on one
-```
+![polycanv in action](docs/demo/launcher.gif)
 
-- **Canvas view** — every session tiled on one screen. Click any of them and type immediately.
-- **List view** — a sidebar showing name, tool, and working directory for each session,
-  with one expanded on the right. Pick from the list and it swaps into the main slot.
-- **`Ctrl+y` to switch** — the session you were looking at stays in the main slot.
-  Your context is never cut.
-- **Nothing is closed.** List view *folds* the other sessions; they all keep running.
+*Opening a tool from the picker, dragging it into place, and resizing it.*
 
-### Traffic lights
+## How it works
 
-Each session carries a light: 🟢 running / 🟡 waiting for you (permission prompts) /
-🔴 finished / ⚪ idle.
-
-The light shows up in the sidebar **even for sessions you can't currently see** — so a
-session that finishes while folded away doesn't slip past you. Red clears once you
-actually look at that session.
-
-## What you can run in it
-
-claude code · codex cli · opencode · qwen code · PowerShell · bash/zsh —
-and **anything else you add one line of config for**. The list above is just a default,
-not a privileged set.
+- **A canvas, not a tiling grid.** Drag a terminal by its border to move it; drag the
+  bottom-right corner to resize it. Terminals overlap, and they stay where you left them.
+- **`Ctrl+b` then a key** — `n` opens the tool picker, `t` opens a shell, `w` closes the
+  focused terminal, `q` quits. Everything else goes straight to the program inside, so
+  `Ctrl+c`, `Ctrl+w` and the arrow keys still mean what they always meant. Press
+  `Ctrl+b` twice to send it through.
+- **Your tools, from a config file.** `~/.config/polycanv/tools.toml` is created on first
+  run with claude code, codex, opencode, qwen and a shell. Add your own CLI with one
+  entry — it behaves exactly like the built-ins.
 
 ## Install
 
@@ -58,28 +41,34 @@ Requires Python 3.10+, which `uv` will fetch for you if you do not have it.
 > **Unix only for now.** Terminals are driven through `pty`, which does not exist on
 > Windows. WSL works.
 
-### From a browser
+## Configuring tools
 
-On WSL, a remote box, or anywhere a terminal emulator is awkward, you can reach polycanv
-over HTTP instead:
+```toml
+[[tool]]
+name = "claude"
+command = ["claude"]
 
-```sh
-sh scripts/polycanv-web.sh      # starts the server, prints a login token and the URL
+[[tool]]
+name = "api server"
+command = ["bash", "-lc", "npm run dev"]
+cwd = "~/work/api"
 ```
 
-The server binds to `127.0.0.1` only. Exposing it to a network means **opening terminal
-access over that network** — do not do it without HTTPS and tokens configured.
+A tool that is not installed still appears in the picker, marked — so you can tell
+"polycanv cannot find it" apart from "polycanv does not support it".
 
-## Layout
+## Planned
 
-```
-layouts/            canvas / list layouts
-crates/protocol/    shared contract for session state and metadata
-plugins/sidebar/    list rendering, select → swap into main, view toggle
-plugins/launcher/   pick a tool → run it in a new pane
-plugins/status/     state detection → traffic lights
-scripts/            install, CLI hook → state bridge
-```
+Tracked in [issues](https://github.com/maengyo/polycanv/issues) and on the
+[project board](https://github.com/users/maengyo/projects/1):
+
+- **Traffic lights** — 🟢 running / 🟡 waiting for you / 🔴 finished / ⚪ idle on each
+  terminal's border. All four CLIs' state protocols are already measured and written up in
+  [`docs/research/cli-status-hooks.md`](docs/research/cli-status-hooks.md); the detection
+  itself is not built yet.
+- **Grouping by project** — terminals working in the same directory read as one workstream.
+- **Session persistence** — reopen to the arrangement you left.
+- **Browser access** — for WSL and remote boxes, bound to `127.0.0.1` only.
 
 ## Prior art
 
@@ -93,25 +82,29 @@ polycanv takes that idea to the terminal. Same premise — **sessions need a pla
 tab index** — with a deliberately narrower scope: no editor, no browser, no desktop app.
 If you want the full spatial IDE, use cate; it is the richer tool.
 
-## Backlog
+## Layout
 
-Open work is tracked in [issues](https://github.com/maengyo/polycanv/issues) and on the
-[project board](https://github.com/users/maengyo/projects/1). Priority lives in the
-`P0`–`P3` labels — **P0 means it blocks a first-time user**.
+```
+src/polycanv/
+  app.py        the app: prefix key, actions
+  canvas.py     where terminals are placed
+  terminal.py   one terminal: PTY, screen state, move and resize
+  launcher.py   the tool picker
+  tools.py      reading tools.toml
+  keymap.py     key → the bytes a terminal expects
+  keys.py       which keys the app takes, and why so few
+scripts/dev/    recording the demo, capturing screens for verification
+docs/           research, dated worklog, demo script
+```
 
 ## Status
 
-The core behaviour is verified by measurement — sessions survive view switches, folding
-and unfolding, select → swap into main, four AI CLIs running at once, and a real claude
-turn reaching 🔴 through the bridge.
+What is built: the canvas, terminals that move and resize, the tool picker, and key
+handling that leaves the inner program its keys.
 
-What is *not* verified, and why, is written down in **[docs/setup.md](docs/setup.md) §8**.
-In particular, **Windows and Linux are unverified** (development happened on macOS).
-
-Design decisions and the measurements behind them live in `CLAUDE.md`; raw research is in
-`docs/research/`; a dated log of what was requested and found is in `docs/worklog.md`.
-**Assumptions that turned out wrong are kept there too** — why a decision was made outlives
-the decision itself.
+What is not: everything under **Planned** above. Design decisions and the measurements
+behind them live in `CLAUDE.md`; a dated log is in `docs/worklog.md`. **Assumptions that
+turned out wrong are kept there too** — why a decision was made outlives the decision.
 
 ## License
 

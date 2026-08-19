@@ -20,6 +20,9 @@ from rich.text import Text
 from textual.events import MouseDown, MouseMove, MouseUp
 from textual.widget import Widget
 
+from .keymap import sequence
+from .keys import PREFIX
+
 #: 테두리가 먹는 칸 수. 안쪽 크기를 계산할 때 빼야 PTY 가 실제 표시 영역을 안다.
 BORDER = 2
 
@@ -149,10 +152,15 @@ class TerminalPanel(Widget, can_focus=True):
     def on_key(self, event) -> None:
         if self.fd is None:
             return
-        text = event.character
+        # 접두키와 그 다음 한 글자는 앱의 것이다. 여기서 멈추면 단축키가 영영 닿지 않는다.
+        if event.key == PREFIX or getattr(self.app, "prefix_armed", False):
+            return
+        # `event.character` 만 보면 ctrl 키도 enter 도 화살표도 전달되지 않는다(실측).
+        text = sequence(event.key, event.character)
         if text is not None:
             self.send(text)
             event.stop()
+            event.prevent_default()
 
     # ── 자리와 크기 ─────────────────────────────────────────────────────────
     def _apply_geometry(self) -> None:
@@ -168,12 +176,32 @@ class TerminalPanel(Widget, can_focus=True):
         cols, rows = self.geometry_.inner()
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
+    def _room(self) -> tuple[int, int]:
+        """캔버스가 내주는 칸. 아직 붙기 전이면 알 수 없다."""
+        parent = self.parent
+        size = getattr(parent, "size", None)
+        if size is None or not size.width or not size.height:
+            return 0, 0
+        return size.width, size.height
+
     def move_to(self, x: int, y: int) -> None:
-        self.geometry_.x = max(0, x)
-        self.geometry_.y = max(0, y)
+        """자리를 옮긴다. **캔버스 밖으로는 못 나간다.**
+
+        나갈 수 있게 두면 끌다가 놓친 터미널을 되찾을 방법이 없다. 자유 배치는
+        아무 데나 둘 수 있다는 뜻이지 잃어버릴 수 있다는 뜻이 아니다.
+        """
+        room_w, room_h = self._room()
+        g = self.geometry_
+        self.geometry_.x = max(0, min(x, room_w - g.width) if room_w else x)
+        self.geometry_.y = max(0, min(y, room_h - g.height) if room_h else y)
         self._apply_geometry()
 
     def resize_to(self, width: int, height: int) -> None:
+        room_w, room_h = self._room()
+        g = self.geometry_
+        if room_w:
+            width = min(width, room_w - g.x)
+            height = min(height, room_h - g.y)
         self.geometry_.width = max(MIN_WIDTH, width)
         self.geometry_.height = max(MIN_HEIGHT, height)
         cols, rows = self.geometry_.inner()
