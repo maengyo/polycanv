@@ -17,8 +17,13 @@ chose, staying where you put it.
 
 ## How it works
 
-- **A canvas, not a tiling grid.** Drag a terminal by its border to move it; drag the
-  bottom-right corner to resize it. Terminals overlap, and they stay where you left them.
+- **A canvas, not a tiling grid.** Each terminal has a title bar: drag it to move the
+  window, or use the minimize and close buttons at its right edge. Drag the bottom-right
+  corner to resize. Terminals overlap, and they stay where you left them.
+- **The body belongs to the terminal.** Drag across it to select text (`Cmd+C` copies);
+  `Ctrl+C` goes to the program inside, where it interrupts a running agent. The wheel
+  scrolls back through output — or is handed to the program inside when it wants the
+  mouse, as claude code and vim do.
 - **`Ctrl+b` then a key** — `n` opens the tool picker, `t` opens a shell, `w` closes the
   focused terminal, `q` quits. Everything else goes straight to the program inside, so
   `Ctrl+c`, `Ctrl+w` and the arrow keys still mean what they always meant. Press
@@ -40,6 +45,13 @@ Requires Python 3.10+, which `uv` will fetch for you if you do not have it.
 
 > **Unix only for now.** Terminals are driven through `pty`, which does not exist on
 > Windows. WSL works.
+
+### Seeing more at once
+
+Terminals cannot scale text, so polycanv has no zoom of its own — but your terminal
+already does it. `Cmd+-` (or `Ctrl+-`) shrinks the font, which gives the app more rows
+and columns, which fits more panels on screen. In a browser the same shortcut works, and
+you can start small with `?fontsize=8` on the URL.
 
 ## Configuring tools
 
