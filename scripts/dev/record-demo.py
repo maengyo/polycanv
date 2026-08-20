@@ -216,15 +216,18 @@ def record(argv: list[str], steps, seconds: float, warmup: float, env: dict[str,
     return chunks
 
 
-def snapshot(screen) -> list[list[tuple[str, str, str]]]:
+def snapshot(screen) -> list[list[tuple[str, str, str, bool]]]:
     """지금 화면을 평범한 값으로 떠낸다.
 
     pyte 의 행은 기본값을 아는 dict 라 그대로 복사하면 빈 칸을 물었을 때 터진다.
+
+    **반전(reverse)까지 가져와야 한다.** 이걸 빠뜨리면 제목 표시줄처럼 색을 안 쓰고
+    반전으로 구분한 것들이 그림에서 사라져, 화면이 실제보다 밋밋해 보인다(실측).
     """
     rows = []
     for y in range(ROWS):
         row = screen.buffer[y]
-        rows.append([(c.data, c.fg, c.bg) for c in (row[x] for x in range(COLS))])
+        rows.append([(c.data, c.fg, c.bg, c.reverse) for c in (row[x] for x in range(COLS))])
     return rows
 
 
@@ -250,14 +253,16 @@ def draw(buffer, mono, hangul) -> Image.Image:
     img = Image.new("RGB", (COLS * CELL_W, ROWS * CELL_H + PAD), BG)
     pen = ImageDraw.Draw(img)
     for y, row in enumerate(buffer):
-        for x, (ch, fg, bg_name) in enumerate(row):
-            bg = color(bg_name, BG)
+        for x, (ch, fg_name, bg_name, reverse) in enumerate(row):
+            fg, bg = color(fg_name, FG), color(bg_name, BG)
+            if reverse:
+                fg, bg = bg, fg
             if bg != BG:
                 pen.rectangle([x * CELL_W, y * CELL_H, (x + 1) * CELL_W, (y + 1) * CELL_H], fill=bg)
             if not ch or ch == " ":
                 continue
             font = hangul if is_hangul(ch) else mono
-            pen.text((x * CELL_W, y * CELL_H), ch, font=font, fill=color(fg, FG))
+            pen.text((x * CELL_W, y * CELL_H), ch, font=font, fill=fg)
     return img
 
 
