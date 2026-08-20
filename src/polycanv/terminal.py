@@ -58,6 +58,34 @@ class Geometry:
         return max(self.width - BORDER, 1), max(self.height - BORDER, 1)
 
 
+class Vt(pyte.Screen):
+    """안에서 도는 프로그램이 무엇을 뱉든 **앱을 죽이지 않는** 화면.
+
+    두 가지를 한다.
+
+    **질의에 답한다.** 프로그램은 커서 위치 같은 것을 터미널에 묻고(`ESC[6n`) 답을
+    기다린다. 답하지 않으면 기다리다 멈추거나 이상하게 그린다. pyte 는 답할 내용을
+    `write_process_input` 으로 넘겨 주므로 그대로 PTY 에 돌려보낸다.
+
+    **모르는 것에 죽지 않는다.** pyte 0.8 의 `report_device_status` 는 `private`
+    인자를 모른다. claude code 가 보내는 `ESC[?6n` 이 정확히 그 경우이고, 그대로 두면
+    **터미널 하나가 앱 전체를 넘어뜨린다**(실측).
+    """
+
+    def __init__(self, columns: int, lines: int) -> None:
+        super().__init__(columns, lines)
+        #: 답을 돌려보낼 곳. 붙기 전에는 없다.
+        self.reply = None
+
+    def write_process_input(self, data: str) -> None:
+        if self.reply is not None:
+            self.reply(data)
+
+    def report_device_status(self, mode: int, private: bool = False) -> None:
+        # private 여부는 구분하지 않는다 — 어느 쪽이든 커서 위치를 묻는 것이다.
+        super().report_device_status(mode)
+
+
 class TerminalPanel(Widget, can_focus=True):
     """PTY 하나를 물고 캔버스 위에 자유롭게 놓이는 패널."""
 
@@ -78,8 +106,11 @@ class TerminalPanel(Widget, can_focus=True):
         self.cwd = cwd
         cols, rows = geometry.inner()
         #: pyte 화면. Textual 위젯의 `.screen` 은 소속 Screen 이라 이름을 겹칠 수 없다.
-        self.vt = pyte.Screen(cols, rows)
+        self.vt = Vt(cols, rows)
+        self.vt.reply = self.send
         self.stream = pyte.ByteStream(self.vt)
+        #: 화면에 먹이다 삼킨 예외 수. 조용히 이상해지는 것을 알아채기 위한 것이다.
+        self.glitches = 0
         #: 재생용 원본 바이트. 크기가 바뀌면 이걸 새 화면에 다시 먹인다.
         self._replay = bytearray()
         self.fd: int | None = None
@@ -132,9 +163,20 @@ class TerminalPanel(Widget, can_focus=True):
             self.fd = None
             return
         if data:
-            self.stream.feed(data)
+            self._feed(data)
             self._remember(data)
             self.refresh()
+
+    def _feed(self, data: bytes) -> None:
+        """화면에 먹인다. **여기서 나는 예외가 앱을 죽여서는 안 된다.**
+
+        안에서 도는 것은 우리가 고를 수 없는 남의 프로그램이고, 터미널 에뮬레이션은
+        완전하지 않다. 한 터미널의 출력이 다른 터미널까지 끌고 내려가는 건 최악이다.
+        """
+        try:
+            self.stream.feed(data)
+        except Exception:  # noqa: BLE001 - 무엇이 오든 화면 하나가 앱을 넘어뜨리면 안 된다
+            self.glitches += 1
 
     def _remember(self, data: bytes) -> None:
         """재생용으로 보관한다. 한도를 넘으면 앞에서 버린다 — 최근 것이 더 쓸모 있다."""
@@ -208,10 +250,11 @@ class TerminalPanel(Widget, can_focus=True):
 
         # ★ `vt.resize()` 를 쓰지 않는다. 줄이 줄어들면 위쪽을 버려서 화면이 비어버린다(실측).
         #   새 화면을 만들고 보관해둔 바이트를 다시 먹여 그 크기에서의 화면을 얻는다.
-        self.vt = pyte.Screen(cols, rows)
+        self.vt = Vt(cols, rows)
+        self.vt.reply = self.send
         self.stream = pyte.ByteStream(self.vt)
         if self._replay:
-            self.stream.feed(bytes(self._replay))
+            self._feed(bytes(self._replay))
 
         self._apply_geometry()
         self._sync_pty_size()
