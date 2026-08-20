@@ -25,7 +25,9 @@ class Canvas(Container):
     Canvas {
         width: 100%;
         height: 100%;
-        background: $panel;
+        /* 바닥은 **가장 뒤로 물러나는 색**이어야 한다. 패널과 같은 색을 쓰면
+           패널이 떠 보이지 않고, 눈이 어디를 봐야 할지 알 수 없다. */
+        background: $background;
     }
     """
 

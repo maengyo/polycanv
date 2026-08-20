@@ -18,6 +18,7 @@ from collections import deque
 from dataclasses import dataclass
 
 import pyte
+from rich.style import Style
 from rich.text import Text
 from textual.events import MouseDown, MouseMove, MouseScrollDown, MouseScrollUp, MouseUp
 from textual.widget import Widget
@@ -71,6 +72,43 @@ MOUSE_MODES = frozenset({1000 << 5, 1002 << 5, 1003 << 5})
 SGR_MOUSE = 1006 << 5
 
 
+#: pyte 가 쓰는 이름 중 rich 와 다른 것. pyte 는 SGR 33 을 "brown" 이라 부른다.
+COLOR_ALIAS = {"brown": "yellow"}
+
+#: 셀 속성 → rich 스타일. 같은 조합이 화면 가득 되풀이되므로 만들어 두고 다시 쓴다.
+_STYLES: dict[tuple, Style] = {}
+
+
+def cell_color(name: str) -> str | None:
+    """pyte 의 색 이름을 rich 가 아는 것으로. 기본값이면 `None` (물려받는다)."""
+    if name == "default":
+        return None
+    if len(name) == 6 and all(c in "0123456789abcdefABCDEF" for c in name):
+        return f"#{name}"  # 256색·트루컬러는 16진으로 온다
+    if name.startswith("bright"):
+        base = name[len("bright") :]
+        return f"bright_{COLOR_ALIAS.get(base, base)}"
+    return COLOR_ALIAS.get(name, name)
+
+
+def cell_style(key: tuple) -> Style:
+    """(fg, bg, bold, italics, underscore, reverse, strikethrough) → 스타일."""
+    style = _STYLES.get(key)
+    if style is None:
+        fg, bg, bold, italics, underscore, reverse, strike = key
+        style = Style(
+            color=cell_color(fg),
+            bgcolor=cell_color(bg),
+            bold=bold or None,
+            italic=italics or None,
+            underline=underscore or None,
+            reverse=reverse or None,
+            strike=strike or None,
+        )
+        _STYLES[key] = style
+    return style
+
+
 @dataclass
 class Geometry:
     """캔버스 위의 자리와 크기. **이게 세션의 정체성이다** — 저장하고 복원할 값."""
@@ -107,7 +145,8 @@ class Vt(pyte.Screen):
         #: 답을 돌려보낼 곳. 붙기 전에는 없다.
         self.reply = None
         #: 위로 흘러간 줄들. **pyte 는 이걸 안 준다** — `Screen` 은 화면 밖 줄을 그냥 버린다.
-        self.history: deque[str] = deque(maxlen=history)
+        #: 색까지 그대로 담는다. 되돌아본 부분만 흑백이면 고장으로 보인다.
+        self.history: deque[list[tuple[str, tuple]]] = deque(maxlen=history)
 
     def index(self) -> None:
         """한 줄 내려간다. 맨 아래였다면 **맨 윗줄이 화면 밖으로 밀려난다.**
@@ -123,20 +162,32 @@ class Vt(pyte.Screen):
     def line(self, y: int) -> str:
         """한 줄만 글자로 만든다.
 
-        **`display` 를 쓰면 안 된다.** 그건 화면 **전체**를 매번 새로 만드는 속성이라,
-        줄 하나 밀릴 때마다 부르면 처리량이 12배 떨어진다 (1.59 → 0.13 MB/s, 실측).
-        넓은 글자의 뒷칸은 `data` 가 빈 문자열이라 그냥 이어 붙여도 결과가 같다.
+        **`display` 를 쓰면 안 된다.** 그건 화면 **전체**를 매번 새로 만드는 속성이고,
+        무엇보다 **색을 버린다.** 줄 하나 밀릴 때마다 부르면 처리량도 12배 떨어진다
+        (1.59 → 0.13 MB/s, 실측). 넓은 글자의 뒷칸은 `data` 가 빈 문자열이라
+        그냥 이어 붙여도 결과가 같다.
         """
         row = self.buffer[y]
         if not row:
-            return ""
+            return []
         # **쓰인 칸까지만 본다.** pyte 의 행은 성긴 dict 라 안 쓴 칸은 아예 없다.
-        # 폭 전체를 훑으면 `seq` 처럼 짧은 줄이 쏟아질 때 스무 배를 헛일한다
-        # (140칸 훑기 × 줄마다).
+        # 폭 전체를 훑으면 `seq` 처럼 짧은 줄이 쏟아질 때 스무 배를 헛일한다.
         width = min(max(row) + 1, self.columns)
-        # 오른쪽 공백은 보관하지 않는다 — 화면에 그릴 때 어차피 잘라내고,
-        # 줄마다 폭만큼의 공백을 이천 줄 쌓으면 그게 곧 메모리다.
-        return "".join(row[x].data for x in range(width)).rstrip()
+
+        runs: list[tuple[str, tuple]] = []
+        buf: list[str] = []
+        current: tuple | None = None
+        for x in range(width):
+            c = row[x]
+            key = (c.fg, c.bg, c.bold, c.italics, c.underscore, c.reverse, c.strikethrough)
+            if key != current:
+                if buf:
+                    runs.append(("".join(buf), current))
+                buf, current = [], key
+            buf.append(c.data)
+        if buf:
+            runs.append(("".join(buf), current))
+        return runs
 
     def reset(self) -> None:
         super().reset()
@@ -157,11 +208,29 @@ class TerminalPanel(Widget, can_focus=True):
     DEFAULT_CSS = """
     TerminalPanel {
         position: absolute;
-        border: round $primary-darken-2;
+        border: round $secondary;
         background: $surface;
+        /* ★ 글자색을 반드시 못박는다. 배경만 칠하면 안에서 도는 프로그램이 색을 지정하지
+           않은 글자가 **사용자 터미널의 기본 글자색**으로 그려진다. 밝은 테마에서는
+           흰 바탕에 흰 글자가 된다(실측: 셀의 대부분이 fg='default', bg='ffffff' 였다). */
+        color: $foreground;
     }
     TerminalPanel:focus { border: round $accent; }
+
+    /* 제목 줄. **테마에서 색을 가져온다** — 반전(reverse)으로 때우면 밝은 테마에서
+       검은 띠가 되고, 무엇보다 Text 전체에 스타일이 걸리는 사고가 난다. */
+    TerminalPanel > .terminal--title {
+        background: $panel;
+        color: $text-muted;
+    }
+    TerminalPanel > .terminal--title-active {
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
     """
+
+    COMPONENT_CLASSES = {"terminal--title", "terminal--title-active"}
 
     def __init__(self, command: list[str], geometry: Geometry, title: str, cwd: str | None = None):
         super().__init__()
@@ -493,10 +562,18 @@ class TerminalPanel(Widget, can_focus=True):
         if self.history_offset:
             # 지금 보고 있는 곳이 맨 아래가 아니면 그렇다고 알려야 한다.
             name += f"  ↑{self.history_offset}"
-        # 잡는 곳이라는 걸 생김새로 알려야 한다. 색을 하드코딩하지 않으려고 반전을 쓴다 —
-        # 어떤 테마에서도 배경과 구분된다.
-        style = "reverse" if self.has_focus else "dim"
-        line = Text(name[:room].ljust(room), style=style)
+        # ⚠️ `Text(글자, style=...)` 는 **그 Text 전체의 기본 스타일**이 된다.
+        #    여기에 본문 줄들을 이어 붙이므로, 그렇게 쓰면 포커스된 패널의
+        #    터미널 내용까지 통째로 그 스타일을 뒤집어쓴다(실측).
+        name_class = "terminal--title-active" if self.has_focus else "terminal--title"
+        try:
+            style = self.get_component_rich_style(name_class)
+        except KeyError:
+            # 아직 화면에 붙지 않았으면 테마를 물어볼 곳이 없다.
+            # **그리기가 마운트를 요구해서는 안 된다** — 테스트가 곧바로 걸린다.
+            style = Style()
+        line = Text()
+        line.append(name[:room].ljust(room), style=style)
         line.append(buttons[:width], style=style)
         return line
 
@@ -510,7 +587,8 @@ class TerminalPanel(Widget, can_focus=True):
 
         out = self._title_line()
         if not self.folded:
-            for line in lines:
+            for runs in lines:
                 out.append("\n")
-                out.append(line)
+                for text, key in runs:
+                    out.append(text, style=None if key is None else cell_style(key))
         return out

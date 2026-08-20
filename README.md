@@ -28,6 +28,8 @@ chose, staying where you put it.
   focused terminal, `q` quits. Everything else goes straight to the program inside, so
   `Ctrl+c`, `Ctrl+w` and the arrow keys still mean what they always meant. Press
   `Ctrl+b` twice to send it through.
+- **Light or dark.** `Ctrl+b d` switches, and the choice is remembered. `--theme light`
+  for one run without changing what is saved.
 - **Your tools, from a config file.** `~/.config/polycanv/tools.toml` is created on first
   run with claude code, codex, opencode, qwen and a shell. Add your own CLI with one
   entry — it behaves exactly like the built-ins.
@@ -45,6 +47,14 @@ Requires Python 3.10+, which `uv` will fetch for you if you do not have it.
 
 > **Unix only for now.** Terminals are driven through `pty`, which does not exist on
 > Windows. WSL works.
+
+### Light theme
+
+![the light theme](docs/demo/light-theme.png)
+
+The focused terminal is the one piece of information the canvas has to make obvious, so
+that is where the colour goes — its title bar. Everything else stays quiet. Red, amber and
+green are deliberately unused: they belong to the traffic lights.
 
 ### From a browser
 

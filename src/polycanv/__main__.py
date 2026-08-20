@@ -19,6 +19,11 @@ def main() -> int:
         type=int,
         help="--web 일 때 쓸 포트 (기본 8000, 사용 중이면 빈 포트를 찾는다)",
     )
+    parser.add_argument(
+        "--theme",
+        choices=("dark", "light"),
+        help="이번 실행에만 쓸 테마 (ctrl+b d 로 바꾸면 그건 저장된다)",
+    )
     args = parser.parse_args()
 
     if args.web:
@@ -27,8 +32,9 @@ def main() -> int:
         return serve(args.port)
 
     from .app import PolycanvApp
+    from .theme import BY_NAME
 
-    PolycanvApp().run()
+    PolycanvApp(theme=BY_NAME.get(args.theme) if args.theme else None).run()
     return 0
 
 

@@ -10,6 +10,8 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from . import settings as settings_module
+from . import theme as theme_module
 from . import tools as tools_module
 from .canvas import Canvas
 from .keymap import sequence
@@ -25,7 +27,7 @@ class PolycanvApp(App):
     TITLE = "polycanv"
 
     CSS = """
-    Screen { background: $panel; }
+    Screen { background: $background; }
     #hint {
         dock: bottom;
         height: 1;
@@ -46,8 +48,11 @@ class PolycanvApp(App):
     #: 명령 팔레트가 `ctrl+p` 를 가져간다. readline 의 이전 줄이라 뺏을 수 없다.
     ENABLE_COMMAND_PALETTE = False
 
-    def __init__(self) -> None:
+    def __init__(self, theme: str | None = None) -> None:
         super().__init__()
+        #: 이번 실행에만 쓰는 테마. 없으면 저장된 것을 따른다.
+        self._theme_override = theme
+        self.settings = settings_module.Settings()
         #: 접두키를 눌러 다음 한 글자를 기다리는 중인가. 패널이 이 값을 보고 키를 양보한다.
         self.prefix_armed = False
         self.config = tools_module.ToolConfig(tools_module.defaults(), tools_module.config_path())
@@ -57,6 +62,12 @@ class PolycanvApp(App):
         yield Static(HINT, id="hint")
 
     def on_mount(self) -> None:
+        for t in theme_module.THEMES:
+            self.register_theme(t)
+        self.settings = settings_module.load()
+        # 깃발로 준 것은 이번만이다 — 저장된 선택을 조용히 덮어쓰지 않는다.
+        self.theme = self._theme_override or self.settings.theme
+
         self.config = tools_module.load()
         if self.config.problem:
             self.notify(self.config.problem, severity="warning")
@@ -132,6 +143,13 @@ class PolycanvApp(App):
                 self._open(tool.resolved(), title=tool.name, cwd=tool.resolved_cwd())
 
         self.push_screen(ToolPicker(self.config.tools), opened)
+
+    def action_toggle_theme(self) -> None:
+        """밝은 쪽 ↔ 어두운 쪽. **고른 것은 다음에도 남는다.**"""
+        self.theme = theme_module.other(self.theme)
+        self.settings.theme = self.theme
+        self.settings.save()
+        self.notify("밝은 테마" if self.theme == theme_module.LIGHT.name else "어두운 테마")
 
     def action_close_focused(self) -> None:
         focused = self.focused

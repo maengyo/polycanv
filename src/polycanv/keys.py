@@ -22,8 +22,9 @@ COMMANDS = {
     "n": "launch",
     "t": "new_shell",
     "w": "close_focused",
+    "d": "toggle_theme",
     "q": "quit",
 }
 
 #: 아래에 늘 띄워 두는 안내. 접두키는 눌러 보기 전에는 있는 줄 모른다.
-HINT = "ctrl+b  →  n 도구  ·  t 셸  ·  w 닫기  ·  q 종료"
+HINT = "ctrl+b  →  n 도구  ·  t 셸  ·  w 닫기  ·  d 테마  ·  q 종료"
