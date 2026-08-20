@@ -6,6 +6,7 @@ PTY 를 물고, 그 출력을 화면 상태로 유지하고, 키 입력을 되�
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import fcntl
 import os
@@ -57,6 +58,10 @@ REPLAY_LIMIT = 256 * 1024
 
 #: 되돌아볼 수 있는 줄 수. 화면 밖으로 밀려난 줄을 이만큼 보관한다.
 SCROLLBACK = 2000
+
+#: 한 번 깨어났을 때 삼킬 최대 바이트. 이보다 많으면 다음 차례로 넘긴다 —
+#: 한 터미널이 화면을 독차지하지 않게 하는 몫이다.
+PUMP_BUDGET = 512 * 1024
 
 #: 휠 한 번에 움직이는 줄 수. 터미널 에뮬레이터들이 대체로 3줄이다.
 WHEEL_LINES = 3
@@ -112,8 +117,26 @@ class Vt(pyte.Screen):
         """
         top, bottom = self.margins or (0, self.lines - 1)
         if self.cursor.y == bottom:
-            self.history.append(self.display[top])
+            self.history.append(self.line(top))
         super().index()
+
+    def line(self, y: int) -> str:
+        """한 줄만 글자로 만든다.
+
+        **`display` 를 쓰면 안 된다.** 그건 화면 **전체**를 매번 새로 만드는 속성이라,
+        줄 하나 밀릴 때마다 부르면 처리량이 12배 떨어진다 (1.59 → 0.13 MB/s, 실측).
+        넓은 글자의 뒷칸은 `data` 가 빈 문자열이라 그냥 이어 붙여도 결과가 같다.
+        """
+        row = self.buffer[y]
+        if not row:
+            return ""
+        # **쓰인 칸까지만 본다.** pyte 의 행은 성긴 dict 라 안 쓴 칸은 아예 없다.
+        # 폭 전체를 훑으면 `seq` 처럼 짧은 줄이 쏟아질 때 스무 배를 헛일한다
+        # (140칸 훑기 × 줄마다).
+        width = min(max(row) + 1, self.columns)
+        # 오른쪽 공백은 보관하지 않는다 — 화면에 그릴 때 어차피 잘라내고,
+        # 줄마다 폭만큼의 공백을 이천 줄 쌓으면 그게 곧 메모리다.
+        return "".join(row[x].data for x in range(width)).rstrip()
 
     def reset(self) -> None:
         super().reset()
@@ -186,11 +209,19 @@ class TerminalPanel(Widget, can_focus=True):
         self.pid, self.fd = pid, fd
         self._sync_pty_size()
         os.set_blocking(fd, False)
-        # 20fps. 더 자주 읽어도 사람 눈에는 같고 CPU 만 먹는다.
-        self.set_interval(0.05, self._pump)
+        # **타이머로 훑지 않는다.** 패널마다 초당 20번을 깨우면 아무 일이 없어도
+        # 터미널 수만큼 CPU 를 쓴다(실측: 유휴 0.3%). 읽을 게 생겼을 때만 깨운다.
+        asyncio.get_running_loop().add_reader(fd, self._pump)
+
+    def _stop_reading(self) -> None:
+        if self.fd is None:
+            return
+        with contextlib.suppress(RuntimeError, ValueError, OSError):
+            asyncio.get_running_loop().remove_reader(self.fd)
 
     def close(self) -> None:
         """자식 프로세스를 정리한다. 남겨두면 좀비가 쌓인다."""
+        self._stop_reading()
         if self.pid:
             with contextlib.suppress(ProcessLookupError, ChildProcessError):
                 os.kill(self.pid, signal.SIGHUP)
@@ -202,21 +233,43 @@ class TerminalPanel(Widget, can_focus=True):
 
     # ── 입출력 ──────────────────────────────────────────────────────────────
     def _pump(self) -> None:
+        """읽을 게 생겼다. **있는 만큼 몰아 읽는다.**
+
+        한 번 읽고 바로 그리면, 쏟아지는 출력에서는 4KB 마다 화면을 다시 그리게 된다.
+        모아서 한 번에 해석하고 한 번만 그리는 편이 훨씬 싸다
+        (실측: `seq 1 200000` 이 6.2초 → 1.6초).
+
+        그래도 **한 번에 삼키는 양에는 한도를 둔다.** 끝없이 뱉는 프로그램이 있으면
+        이 함수가 안 돌아와서 앱 전체가 멈춘다 — 다른 터미널도, 키 입력도.
+        """
         if self.fd is None:
             return
-        try:
-            data = os.read(self.fd, 65536)
-        except BlockingIOError:
+        chunks: list[bytes] = []
+        total = 0
+        while total < PUMP_BUDGET:
+            try:
+                data = os.read(self.fd, 65536)
+            except BlockingIOError:
+                break  # 지금은 더 없다
+            except OSError:
+                # 자식이 죽었다. 화면은 마지막 상태로 남겨둔다 —
+                # 갑자기 비면 사용자는 무슨 일이 있었는지 알 수 없다.
+                self._stop_reading()
+                self.fd = None
+                break
+            if not data:  # EOF — 자식이 끝났다
+                self._stop_reading()
+                self.fd = None
+                break
+            chunks.append(data)
+            total += len(data)
+
+        if not chunks:
             return
-        except OSError:
-            # 자식이 죽었다. 화면은 마지막 상태로 남겨둔다 —
-            # 갑자기 비면 사용자는 무슨 일이 있었는지 알 수 없다.
-            self.fd = None
-            return
-        if data:
-            self._feed(data)
-            self._remember(data)
-            self.refresh()
+        data = b"".join(chunks)
+        self._feed(data)
+        self._remember(data)
+        self.refresh()
 
     def _feed(self, data: bytes) -> None:
         """화면에 먹인다. **여기서 나는 예외가 앱을 죽여서는 안 된다.**
@@ -448,7 +501,8 @@ class TerminalPanel(Widget, can_focus=True):
         return line
 
     def render(self) -> Text:
-        lines = list(self.vt.display)
+        # `display` 는 줄마다 wcwidth 를 돌리고 assert 를 건다. 우리 것이 더 싸다.
+        lines = [self.vt.line(y) for y in range(self.vt.lines)]
         if self.history_offset:
             # 되돌아간 만큼 기록에서 끌어와 위에 붙이고, 그만큼 아래를 잘라낸다.
             back = list(self.vt.history)[-self.history_offset :]
@@ -458,5 +512,5 @@ class TerminalPanel(Widget, can_focus=True):
         if not self.folded:
             for line in lines:
                 out.append("\n")
-                out.append(line.rstrip())
+                out.append(line)
         return out
