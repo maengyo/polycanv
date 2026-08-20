@@ -28,6 +28,10 @@ chose, staying where you put it.
   focused terminal, `q` quits. Everything else goes straight to the program inside, so
   `Ctrl+c`, `Ctrl+w` and the arrow keys still mean what they always meant. Press
   `Ctrl+b` twice to send it through.
+- **Traffic lights.** Each terminal's title bar carries a light: green while the agent is
+  working, amber when it wants an answer from you, red when it has finished, grey when
+  idle. Red clears when you actually look at that terminal — amber does not, because a
+  permission prompt does not go away by being looked at.
 - **Light or dark.** `Ctrl+b d` switches, and the choice is remembered. `--theme light`
   for one run without changing what is saved.
 - **Your tools, from a config file.** `~/.config/polycanv/tools.toml` is created on first
@@ -103,10 +107,8 @@ A tool that is not installed still appears in the picker, marked — so you can 
 Tracked in [issues](https://github.com/maengyo/polycanv/issues) and on the
 [project board](https://github.com/users/maengyo/projects/1):
 
-- **Traffic lights** — 🟢 running / 🟡 waiting for you / 🔴 finished / ⚪ idle on each
-  terminal's border. All four CLIs' state protocols are already measured and written up in
-  [`docs/research/cli-status-hooks.md`](docs/research/cli-status-hooks.md); the detection
-  itself is not built yet.
+- **Traffic lights for the remaining CLIs** — claude code and qwen work today. codex needs
+  its hook trust gate handled (#2) and opencode reports over HTTP SSE rather than hooks (#4).
 - **Grouping by project** — terminals working in the same directory read as one workstream.
 - **Session persistence** — reopen to the arrangement you left.
 - **Browser access** — for WSL and remote boxes, bound to `127.0.0.1` only.

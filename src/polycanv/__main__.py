@@ -24,7 +24,17 @@ def main() -> int:
         choices=("dark", "light"),
         help="이번 실행에만 쓸 테마 (ctrl+b d 로 바꾸면 그건 저장된다)",
     )
+    parser.add_argument(
+        "--hook",
+        action="store_true",
+        help="CLI 훅이 부르는 통로. stdin 의 JSON 을 읽어 신호등에 알린다 (직접 쓸 일은 없다)",
+    )
     args = parser.parse_args()
+
+    if args.hook:
+        from .hook_entry import run
+
+        return run()
 
     if args.web:
         from .web import serve

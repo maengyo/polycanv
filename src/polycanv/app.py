@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import tempfile
+from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -13,7 +15,9 @@ from textual.widgets import Static
 from . import settings as settings_module
 from . import theme as theme_module
 from . import tools as tools_module
+from .bridge import PANE_ENV, SOCKET_ENV, Bridge
 from .canvas import Canvas
+from .hooks import write_claude_settings
 from .keymap import sequence
 from .keys import COMMANDS, HINT, PREFIX, PREFIX_BYTE
 from .launcher import ToolPicker
@@ -53,6 +57,13 @@ class PolycanvApp(App):
         #: 이번 실행에만 쓰는 테마. 없으면 저장된 것을 따른다.
         self._theme_override = theme
         self.settings = settings_module.Settings()
+        #: 패인 식별자 → 패널. 훅이 보내오는 상태를 어디에 붙일지 찾는 표.
+        self.panes: dict[str, TerminalPanel] = {}
+        self._next_pane = 0
+        self.bridge = Bridge(self._on_status)
+        #: 훅 설정 파일을 두는 곳. polycanv 가 끝나면 사라진다 —
+        #: **사용자의 설정 파일은 건드리지 않는다.**
+        self._workdir = tempfile.TemporaryDirectory(prefix="polycanv-", ignore_cleanup_errors=True)
         #: 접두키를 눌러 다음 한 글자를 기다리는 중인가. 패널이 이 값을 보고 키를 양보한다.
         self.prefix_armed = False
         self.config = tools_module.ToolConfig(tools_module.defaults(), tools_module.config_path())
@@ -61,13 +72,14 @@ class PolycanvApp(App):
         yield Canvas()
         yield Static(HINT, id="hint")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         for t in theme_module.THEMES:
             self.register_theme(t)
         self.settings = settings_module.load()
         # 깃발로 준 것은 이번만이다 — 저장된 선택을 조용히 덮어쓰지 않는다.
         self.theme = self._theme_override or self.settings.theme
 
+        await self.bridge.start()
         self.config = tools_module.load()
         if self.config.problem:
             self.notify(self.config.problem, severity="warning")
@@ -122,9 +134,35 @@ class PolycanvApp(App):
             event.prevent_default()
 
     # ── 동작 ────────────────────────────────────────────────────────────────
+    def _on_status(self, pane: str, event) -> None:
+        panel = self.panes.get(pane)
+        if panel is not None:
+            panel.apply_status(event)
+
     def _open(self, command: list[str], title: str, cwd: str | None = None) -> None:
-        panel = self.canvas.open_terminal(command, title=title, cwd=cwd)
+        pane = str(self._next_pane)
+        self._next_pane += 1
+        env = {SOCKET_ENV: str(self.bridge.path), PANE_ENV: pane}
+        command = self._with_hooks(command, pane)
+
+        panel = self.canvas.open_terminal(command, title=title, cwd=cwd, env=env)
+        self.panes[pane] = panel
         self.call_after_refresh(panel.focus)
+
+    def _with_hooks(self, command: list[str], pane: str) -> list[str]:
+        """훅을 얹은 명령.
+
+        **사용자 설정 파일을 고치지 않는다.** claude 는 `--settings <파일>` 로 설정을
+        덧씌울 수 있고(실측), 인증은 그대로 쓴다. 그 길로만 간다.
+
+        도구를 **이름이 아니라 실행 파일로** 판정한다 — 목록에서 이름을 바꿔도
+        훅이 따라와야 한다.
+        """
+        exe = Path(command[0]).name
+        if exe in ("claude", "qwen"):
+            path = write_claude_settings(Path(self._workdir.name), pane)
+            return [*command, "--settings", str(path)]
+        return command
 
     def action_pass_through(self, key: str) -> None:
         """앱이 가로챈 키를 안쪽 터미널로 돌려보낸다."""
@@ -164,3 +202,5 @@ class PolycanvApp(App):
         # 정리는 실패하면 안 되는 일이라 조회에 기대지 않는다.
         for panel in self._panels():
             panel.close()
+        with contextlib.suppress(Exception):
+            self._workdir.cleanup()

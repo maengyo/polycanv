@@ -53,9 +53,13 @@ class Canvas(Container):
         )
 
     def open_terminal(
-        self, command: list[str], title: str, cwd: str | None = None
+        self,
+        command: list[str],
+        title: str,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> TerminalPanel:
-        panel = TerminalPanel(command, self.next_geometry(), title, cwd=cwd)
+        panel = TerminalPanel(command, self.next_geometry(), title, cwd=cwd, env=env)
         self.mount(panel)
         return panel
 

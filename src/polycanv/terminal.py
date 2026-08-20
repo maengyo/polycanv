@@ -25,6 +25,7 @@ from textual.widget import Widget
 
 from .keymap import sequence
 from .keys import PREFIX
+from .status import AgentState, Status, StatusEvent
 
 #: 테두리가 먹는 칸 수. 안쪽 크기를 계산할 때 빼야 PTY 가 실제 표시 영역을 안다.
 BORDER = 2
@@ -43,6 +44,15 @@ TITLE_BAR = 1
 #: 제목 줄 오른쪽 끝의 버튼들. 오른쪽부터 차례로 놓인다.
 #: 각 항목은 (글자, 동작, 폭). 폭은 글자 폭이 아니라 **누를 수 있는 칸 수**다.
 BUTTONS = (("✕", "close", 3), ("─", "minimize", 3))
+
+#: 신호등 문자. **이모지를 쓰지 않는다** — 두 칸을 먹어 폭 계산이 어긋나고,
+#: 터미널마다 폭이 달라 테두리가 밀린다. 한 칸짜리 도형에 색을 입힌다.
+LIGHTS = {
+    AgentState.IDLE: "○",
+    AgentState.RUNNING: "●",
+    AgentState.WAITING: "◆",
+    AgentState.FINISHED: "●",
+}
 
 #: 접었을 때의 높이 — 테두리 둘 + 제목 줄 하나.
 FOLDED_HEIGHT = BORDER + TITLE_BAR
@@ -228,12 +238,36 @@ class TerminalPanel(Widget, can_focus=True):
         color: $text;
         text-style: bold;
     }
+
+    /* 신호등. 색이 곧 의미다 — 테마에서 이 셋을 다른 데 쓰지 않기로 한 이유다. */
+    TerminalPanel > .terminal--light-idle { color: $text-disabled; }
+    TerminalPanel > .terminal--light-running { color: $success; }
+    TerminalPanel > .terminal--light-waiting { color: $warning; }
+    TerminalPanel > .terminal--light-finished { color: $error; text-style: bold; }
     """
 
-    COMPONENT_CLASSES = {"terminal--title", "terminal--title-active"}
+    COMPONENT_CLASSES = {
+        "terminal--title",
+        "terminal--title-active",
+        "terminal--light-idle",
+        "terminal--light-running",
+        "terminal--light-waiting",
+        "terminal--light-finished",
+    }
 
-    def __init__(self, command: list[str], geometry: Geometry, title: str, cwd: str | None = None):
+    def __init__(
+        self,
+        command: list[str],
+        geometry: Geometry,
+        title: str,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ):
         super().__init__()
+        #: 이 터미널의 신호등.
+        self.status = Status()
+        #: 자식에게 더해 줄 환경변수 (훅이 우리를 찾는 길).
+        self.env = env or {}
         self.command = command
         self.geometry_ = geometry
         #: 이름. **테두리 제목으로 쓰지 않는다** — 제목 줄을 우리가 직접 그리고,
@@ -274,6 +308,7 @@ class TerminalPanel(Widget, can_focus=True):
                 with contextlib.suppress(OSError):
                     os.chdir(self.cwd)
             os.environ["TERM"] = "xterm-256color"
+            os.environ.update(self.env)
             os.execvp(self.command[0], self.command)
         self.pid, self.fd = pid, fd
         self._sync_pty_size()
@@ -511,6 +546,16 @@ class TerminalPanel(Widget, can_focus=True):
         event.stop()
 
     # ── 렌더 ────────────────────────────────────────────────────────────────
+    # ── 신호등 ──────────────────────────────────────────────────────────────
+    def apply_status(self, event: StatusEvent) -> None:
+        if self.status.apply(event):
+            self.refresh()
+
+    def on_focus(self) -> None:
+        # **들여다본 것은 확인이다.** 🔴 만 풀린다 — 승인 대기는 쳐다본다고 사라지지 않는다.
+        if self.status.acknowledge():
+            self.refresh()
+
     # ── 휠 ──────────────────────────────────────────────────────────────────
     def _wants_mouse(self) -> bool:
         """안쪽 프로그램이 마우스를 직접 받겠다고 했는가.
@@ -573,9 +618,18 @@ class TerminalPanel(Widget, can_focus=True):
             # **그리기가 마운트를 요구해서는 안 된다** — 테스트가 곧바로 걸린다.
             style = Style()
         line = Text()
-        line.append(name[:room].ljust(room), style=style)
+        # 신호등은 제목 줄 배경 위에 얹힌다. 두 스타일을 더해야 배경을 잃지 않는다.
+        line.append(" ", style=style)
+        line.append(LIGHTS[self.status.state], style=style + self._light_style())
+        line.append(name[: max(room - 2, 0)].ljust(max(room - 2, 0)), style=style)
         line.append(buttons[:width], style=style)
         return line
+
+    def _light_style(self) -> Style:
+        try:
+            return self.get_component_rich_style(f"terminal--light-{self.status.state.value}")
+        except KeyError:
+            return Style()
 
     def render(self) -> Text:
         # `display` 는 줄마다 wcwidth 를 돌리고 assert 를 건다. 우리 것이 더 싸다.
