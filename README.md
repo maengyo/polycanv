@@ -46,6 +46,20 @@ Requires Python 3.10+, which `uv` will fetch for you if you do not have it.
 > **Unix only for now.** Terminals are driven through `pty`, which does not exist on
 > Windows. WSL works.
 
+### From a browser
+
+For WSL, a remote box, or anywhere a terminal emulator is awkward:
+
+```sh
+uv tool install --force 'polycanv[web]'
+polycanv --web            # http://127.0.0.1:8000  (--port to change)
+```
+
+**It binds to `127.0.0.1` and there is no option to change that.** Serving polycanv over
+HTTP is serving a shell, and there is no authentication yet. To reach it from another
+machine, forward the port over SSH — `ssh -L 8000:127.0.0.1:8000 you@box` — which keeps
+the authentication where it belongs.
+
 ### Seeing more at once
 
 Terminals cannot scale text, so polycanv has no zoom of its own — but your terminal
