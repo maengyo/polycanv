@@ -52,8 +52,13 @@ For WSL, a remote box, or anywhere a terminal emulator is awkward:
 
 ```sh
 uv tool install --force 'polycanv[web]'
-polycanv --web            # http://127.0.0.1:8000  (--port to change)
+polycanv --web            # http://127.0.0.1:8000
+polycanv --web --port 9000
 ```
+
+Port 8000 is a busy address on most machines. If it is taken, polycanv moves to the
+next free one and tells you where it went — but if you asked for a specific port and
+it is taken, it says so rather than quietly opening somewhere else.
 
 **It binds to `127.0.0.1` and there is no option to change that.** Serving polycanv over
 HTTP is serving a shell, and there is no authentication yet. To reach it from another
