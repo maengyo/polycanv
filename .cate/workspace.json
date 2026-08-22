@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "name": "tercanv",
+  "color": "",
+  "dockState": {
+    "zones": {
+      "left": {
+        "position": "left",
+        "visible": false,
+        "size": 260,
+        "layout": null
+      },
+      "right": {
+        "position": "right",
+        "visible": false,
+        "size": 260,
+        "layout": null
+      },
+      "bottom": {
+        "position": "bottom",
+        "visible": false,
+        "size": 240,
+        "layout": null
+      },
+      "center": {
+        "position": "center",
+        "visible": true,
+        "size": 0,
+        "layout": {
+          "type": "tabs",
+          "id": "d9686862-633b-4d64-bdb0-78df7f12f54f",
+          "panelIds": [
+            "fef0cacf-95b8-4456-ac6c-65ee999643f3"
+          ],
+          "activeIndex": 0
+        }
+      }
+    }
+  },
+  "panels": {
+    "538eca24-8c53-4857-8642-f995e413952f": {
+      "type": "terminal",
+      "title": "Terminal 1"
+    },
+    "fef0cacf-95b8-4456-ac6c-65ee999643f3": {
+      "type": "canvas",
+      "title": "Canvas"
+    }
+  },
+  "canvases": {
+    "fef0cacf-95b8-4456-ac6c-65ee999643f3": {
+      "id": "fef0cacf-95b8-4456-ac6c-65ee999643f3",
+      "canvasNodes": {
+        "26758d9c-18fe-42be-ba85-38525efdc9a1": {
+          "id": "26758d9c-18fe-42be-ba85-38525efdc9a1",
+          "origin": {
+            "x": -44.90084662595987,
+            "y": 105.41238808851548
+          },
+          "size": {
+            "width": 817.9663195701252,
+            "height": 558.845971186558
+          },
+          "zOrder": 4,
+          "creationIndex": 0,
+          "animationState": "idle",
+          "dockLayout": {
+            "type": "tabs",
+            "id": "99531ae0-7d7a-4424-ae24-a52f0610467f",
+            "panelIds": [
+              "538eca24-8c53-4857-8642-f995e413952f"
+            ],
+            "activeIndex": 0
+          }
+        }
+      },
+      "zoomLevel": 0.6799039295315741,
+      "viewportOffset": {
+        "x": 107.70334246300558,
+        "y": 15.93373446251212
+      }
+    }
+  }
+}

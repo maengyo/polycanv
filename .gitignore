@@ -21,3 +21,6 @@ build/
 target/
 **/*.rs.bk
 *.wasm
+
+# 오프라인 꾸러미는 만들어 쓰는 것이지 저장소에 두는 게 아니다
+polycanv-offline/
